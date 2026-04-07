@@ -5,9 +5,18 @@ build/
 dist/
 wheels/
 *.egg-info
+.jupyter_cache/
+Uso_de_PyQuarto_files/
+Sintaxys_diagramas_quarto/
+jars/
+
+df_robos.parquet
+df_sugerencias.parquet
+
 
 # Virtual environments
 .venv
+
 
 # RStudio (legacy)
 .Rproj.user
