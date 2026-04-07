@@ -1,0 +1,171 @@
+---
+title: "PyQuarto: Reportes Reproducibles Modernos con Quarto y Python"
+subtitle: "Manejo básico de informes PyQuarto"
+author: "Matías Valenzuela Nuche"
+lang: es
+date: last-modified
+date-format: long
+
+# Kernel
+# jupyter: python3
+
+# --- PARAMETRIZACION ---
+# Define aqui las variables que controlan tu informe
+params:
+  #titulo_reporte: "Analisis de Datos"
+  #seed: 42                 # Semilla para reproducibilidad
+  #n_muestras: 100          # Ejemplo de parametro numerico
+  mostrar_codigo: false     # Control de visibilidad
+  color_grafico: "blue"    # Ejemplo de parametro de texto
+
+# Comportamiento global de las celdas
+execute:
+  echo: false
+  warning: false
+  error: false
+  cache: true          # Activa el cache de celdas
+  freeze: auto         # Evita re-renderizar si no hubo cambios globales
+
+
+format:
+  html:
+    theme: flatly
+    page-layout: full
+    toc: true
+    toc-location: left
+    toc-title: "Contenido"
+    toc-depth: 3
+    toc-expand: true
+    number-sections: true
+    number-depth: 3
+    smooth-scroll: true
+    embed-resources: true
+    fig-cap-location: bottom
+    tbl-cap-location: top
+    highlight-style: atom-one
+    html-math-method: katex
+    link-external-icon: true
+    link-external-newwindow: true
+    css: "css/styles.css"
+
+title-block-banner: true
+editor: visual
+---
+
+**PyQuarto** es una plantilla de informes diseñada para ciencia e ingeniería de datos que exigen reproducibilidad, velocidad y estética. Utiliza **Quarto** para la publicación.
+
+Es un documento Quarto que utiliza **Polars**, **Pandas** o **PySpark** para datos y **Plotly** para gráficos.
+
+# Arquitectura del Proyecto
+
+Entender los archivos es clave para manejar el proyecto:
+
+| Archivo/Carpeta | Rol | ¿Necesaria para render? |
+|:-----------------------|:-----------------------|:-----------------------|
+| `pyproject.toml` | **Manifiesto:** Lista las dependencias directas del proyecto (lo que pides, ej: `polars`). | SI |
+| `Informe_PyQuarto.qmd` | **Código:** El informe parametrizado y ejecutable que combina texto y código. | SI |
+| `css/styles.css` | **Código:** El estilo visual del informe. | SI |
+| `README.md` | **Documentación:** Esta guía. | SI |
+| `.jupyter_cache/` | **Caché:** Contiene el caché de la última renderización exitosa del informe. | NO |
+
+------------------------------------------------------------------------
+
+# Guía de Inicio Rápido (generar informes)
+
+Si has recibido esta carpeta y deseas generar el informe, sigue estos pasos estrictos.
+
+## Enviar informe
+
+El único archivo necesario para ver el informe ya renderizado es `Informe_PyQuarto.html`. Todos los demás archivos sirven para generarlo con la mayor comodidad posible.
+
+## Requisitos Previos
+
+1.  **Python 3.10+**
+
+2.  **Quarto CLI** ([Descargar aquí](https://quarto.org/docs/get-started/))
+
+3.  **VScode**
+
+4.  **Extensiones de VScode**: Python, Quarto, Jupyter.
+
+5.  **Librerías base**: Librerías de Python usadas para la plantilla. Pueden instalarse todas copiando y ejecutando el siguiente código:
+
+``` powershell
+Python -m pip install jupyter jupyter-cache ipykernel nbformat jupytext nbclient pandas polars pyspark numpy plotly scipy pyarrow pyodbc
+```
+
+## Renderizar
+
+Si necesita generar el HTML final, siga haga lo siguiente:
+
+-   **Para qué sirve renderizar:** Ejecuta todo el código del reporte y compila el documento final en alguno de los formatos disponibles como: HTML, PDF, WORD. En el caso de la plantilla presente se utiliza *HTML* para utilizar opciones de interactividad.
+-   **Dónde ejecutar:** Tiene 2 opciones
+    -   *Terminal (PowerShell)*: abrir PowerShell dentro de la carpeta del proyecto y utilizar el comando:
+
+        ``` powershell
+        quarto render Informe_PyQuarto.qmd
+        ```
+
+    -   *Preview de VScode*: si se posee la extensión de Quarto para VScode, es posible utilizar el botón `Preview` para renderizar el informe. Para ello:
+
+        -   debe abrir el archivo `Informe_PyQuarto.qmd` desde VScode.
+        -   fijarse en la esquina superior derecha de la pantalla, donde aparece el botón de `Run Code`.
+        -   A su lado hay una pestaña desplegable llamada `Run or Debug`. La opción para `Preview` se despliega de ella.
+        -   También puede presionar la combinación de teclas: `Ctrl + Shift + K`.
+
+------------------------------------------------------------------------
+
+## Configuración de Parámetros
+
+A diferencia de R, en Python los parámetros del YAML (espacio de configuraciones globales al inicio del código del informe) no se inyectan automáticamente.
+
+-   **Para qué sirve:** Define variables globales para el reporte (título, semillas aleatorias) que controlan su comportamiento sin cambiar la lógica.
+-   **Qué se necesita:** Abrir el archivo `Informe_PyQuarto.qmd` en un editor de texto o IDE (VS Code).
+-   **Dónde escribir:** Dentro de `Informe_PyQuarto.qmd`, busca el bloque de código Python (chunk) etiquetado como `imports-config` (aprox. línea 113) y edita el diccionario `PARAMS`.
+
+``` python
+PARAMS = { # <--- Editar desde aquí
+    'titulo_reporte': 'Nuevo Título',
+    'seed': 42 # Semilla para reproducibilidad
+}
+```
+
+------------------------------------------------------------------------
+
+# Pasos para la Actualización del Proyecto
+
+De acuerdo a la matriz de usos y necesidades del proyecto "Marcas-modelo más robados", para realizar un nuevo ciclo trimestral de actualización, debes seguir estrictamente los siguientes pasos en orden:
+
+## Actualizar Insumos Manuales
+
+**⚠️ IMPORTANTE: Antes de ejecutar cualquier reporte, DEBES actualizar los siguientes archivos base:**
+
+-   **`2025.09.03 Tasa Frecuencia de Robo.pdf`**: Consigue y reemplaza este archivo con el reporte trimestral más reciente de la AACH.
+
+-   **`Lista_de_marcas-modelo.xlsx`**: Actualiza manualmente los valores de esta tabla cruzando la información del Excel de Resultados del análisis anterior y los nuevos datos del informe de la AACH.
+
+-   **Imágenes (`tablas_AACH.png` e `Insumo-mas-robados.png`)**: Debes sacar capturas de pantalla actualizadas (con la Herramienta Recortes, por ejemplo) de los nuevos informes de la AACH y de la lista de bloqueados/monitoreados, y reemplazar las imágenes existentes.
+
+## Purgar Caché y Archivos Temporales
+
+Dado que este proyecto usa `polars` y archivos parquet cacheados fuertemente por Quarto, debes eliminar el rastro de la ejecución anterior:
+
+-   Elimina los archivos `Tabla_robados.parquet`, `df_robos.parquet` y `df_sugerencias.parquet`.
+
+-   Elimina el archivo `tabset_mym.md` (fundamental para recrear los paneles de normalización iterativa).
+
+-   (Opcional pero sugerido) Vacía o renombra la carpeta `.jupyter_cache/`.
+
+## Renderizar Análisis Técnico
+
+Verifica que estás conectado correctamente al servidor SQL Server. - Abre tu terminal en la carpeta principal del proyecto.
+
+-   Ejecuta `quarto render Informe_mas_robados.qmd` para construir todo el análisis exploratorio.
+
+-   En caso de éxito, se actualizará `Informe_mas_robados.html`, los `.parquet` intermedios, y `prueba_tabla_interpretaciones.html`.
+
+## Renderizar Informe de Resultados (Final)
+
+Por último, el reporte de "Resultados_mas_robados" recoge el producto final analizado en el reporte anterior: - Ejecuta `quarto render Resultados_mas_robados.qmd`.
+
+-   Al finalizar se generará correctamente `Resultados_mas_robados.html` y arrojará el archivo Excel final (por ej. `Mas_Robados_FINAL_[HOY].xlsx`) utilizando la plantilla requerida.
