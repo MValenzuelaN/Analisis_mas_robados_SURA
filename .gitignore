@@ -10,8 +10,9 @@ Uso_de_PyQuarto_files/
 Sintaxys_diagramas_quarto/
 jars/
 
-df_robos.parquet
-df_sugerencias.parquet
+.parquet
+.xlsx
+.html
 
 
 # Virtual environments
