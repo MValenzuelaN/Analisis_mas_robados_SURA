@@ -5,14 +5,13 @@ build/
 dist/
 wheels/
 *.egg-info
-.jupyter_cache/
-Uso_de_PyQuarto_files/
-Sintaxys_diagramas_quarto/
+*.jupyter_cache/
+*Uso_de_PyQuarto_files/
+*Sintaxys_diagramas_quarto/
 jars/
 
-.parquet
-.xlsx
-.html
+*.parquet
+*.xlsx
 
 
 # Virtual environments
