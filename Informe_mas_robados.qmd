@@ -125,9 +125,9 @@ flowchart TD
     K2 --> T
 ```
 
-(\*) El excel se llama `Lista_de_marcas-modelo.xlsx`, es un archivo creado manualmente. Para ingresar los nombres de las marcas-modelo puede hacer falta conocer el uso de símbolos clave como `$`, `%` o `&` dentro del patrón de normalización.
+(\*) El excel se llama `Lista_de_marcas-modelo.xlsx`, es un archivo creado manualmente. Para ingresar los nombres de las marcas-modelo puede hacer falta conocer el uso de símbolos clave como `$`, `%` o `&` dentro del patrón de homologación.
 
-(\*\*) Algunos nombres de modelo pueden necesitar cambios, ya que se imprimirá la nomenclatura usarda para la normalización (puede contener símbolos extraños como `$`, `%` o `&`).
+(\*\*) Algunos nombres de modelo pueden necesitar cambios, ya que se imprimirá la nomenclatura usarda para la homologación (puede contener símbolos extraños como `$`, `%` o `&`).
 
 ::: {.callout-caution collapse="true"}
 ## Usos y necesidad de actualización de archivos del proyecto
@@ -311,7 +311,7 @@ except Exception as e:
 
 Funciones generales para obtener resultados personalizados y facilitar el análisis automatizado.
 
--   **Render_tabset**: crea paneles `Markdown` del informe separados por botones (entorno tabset) de forma automática a partir de código `Python`. En este caso, lo hace a partir de dataframes de `pandas`, `polars` o `pyspark`. De esta manera (tal como ocurre en la panelización de *Normalización de marcas-modelo* de este mismo informe) puede generar paneles dinámicamente según una cantidad cambiante de tablas de datos a separar para un análisis particularizado de estos. Es una traducción directa desde el paquete de `R` **quartabs** (esta función original se encuentra en el archivo `Quartabs-tab_render.r` del proyecto).
+-   **Render_tabset**: crea paneles `Markdown` del informe separados por botones (entorno tabset) de forma automática a partir de código `Python`. En este caso, lo hace a partir de dataframes de `pandas`, `polars` o `pyspark`. De esta manera (tal como ocurre en la panelización de *Homologación de marcas-modelo* de este mismo informe) puede generar paneles dinámicamente según una cantidad cambiante de tablas de datos a separar para un análisis particularizado de estos. Es una traducción directa desde el paquete de `R` **quartabs** (esta función original se encuentra en el archivo `Quartabs-tab_render.r` del proyecto).
 
 ```{python}
 #| label: render_tabset
@@ -1923,7 +1923,7 @@ pretty_tibble(df_filt)
 -   Para normalizar distintas versiones de una misma marca-modelo puede usarse:
 
 ``` sql
-- Normalizado de marcas modelo de interés dentro de consulta.
+- Homologado de marcas modelo de interés dentro de consulta.
 
 CASE 
     WHEN [MARCA_MODELO] LIKE 'FORD - F-150%' 
@@ -2587,15 +2587,17 @@ df = df.filter(
 pretty_table(df.describe())
 ```
 
-## Normalización de marcas-modelo
+## Homologación de marcas-modelo
 
-Esta sección muestra un panel de marcas-modelo con el fin de validar si se están considerando todas las versiones relevantes para el análisis. Las **versiones** son especies del genero **marca-modelo**, por ello, se ingresan con nombres similares que contienen las palabras claves que componen el nombre de la marca-modelo.
+Esta sección muestra una tabla dinámica de marcas-modelo con el fin de validar si se están considerando todas las versiones relevantes para el análisis y excluyendo las equívocas. Las **versiones** son especies del genero **marca-modelo**, por ello, se ingresan con nombres similares que contienen las palabras clave que componen el nombre de la marca-modelo.
 
-**Primera tabla**: Para cada marca-modelo de interés se muestra una tabla con los nombres únicos de todas las versiones detectadas utilizando el *patrón general utilizado para detectar las versiones de una marca-modelo*, esta es la lista de versiones considerada correcta y que utiliza internamente el informe automatizado para construir las marcas-modelo y sus valores, por lo que debe procurarse de que contenga todas las versiones relevantes.
+**Primera columna**: aparecen los nombres de la marca-modelo de interés.
 
-**Segunda tabla**: Inmediatamente después de la tabla de versiones se muestra una tabla de versiones "sucia", es decir, una en que no se considera un patrón automatizado para detectar las versiones, sino que se considera caulquier nombre único que contenga las palabras clave de la marca-modelo, incluyendo tanto las versiones de la marca-modelo de interés, como otras que tendrían que filtrarse.
+**Segunda columna:** se muestran los nombres únicos de todas las versiones detectadas utilizando el *patrón general utilizado para detectar las versiones de una marca-modelo*, esta es la lista de versiones considerada correcta y que utiliza internamente el informe automatizado para construir metricas de las marcas-modelo y sus valores, por lo que debe procurarse de que contenga todas y solo las versiones relevantes.
 
--   **El método de validación es**: para cada panel de marcas-modelo de interés, comparar ambas tablas de datos desplegadas para comprobar que todas las versiones de la marca-modelo de interés que aparecen en la tabla "sucia" (la segunda) aparezcan también en la tabla final que usa el informe (la primera).
+**Tercera columna**: se muestra la lista de los nombres de las versiones "sucia", es decir, una que no considera un patrón automatizado para detectar las versiones, sino que utiliza cualquier nombre único que contenga las palabras clave de la marca-modelo, incluyendo tanto las versiones de la marca-modelo de interés, como otras que tendrían que filtrarse por ser equívocas.
+
+-   **El método de validación es**: comparar los valores de las columnas de la tabla dinámica desplegada para comprobar que todas las versiones corerctas de la marca-modelo de interés que aparecen en la columna "sucia" (la tercera) aparezcan también en la columna que usa el informe (la segunda) y que se excluyan las equívocas.
 
 ::: {.callout-caution collapse="true"}
 ## El *patrón general utilizado para detectar las versiones de una marca–modelo*
@@ -2884,7 +2886,7 @@ df_bc = df_de_excel.select([pl.col(col_b), pl.col(col_c), pl.col(col_d), pl.col(
 ```
 
 ::: {.callout-note collapse="true"}
-## Lista de Nombres de Marca Modelo
+## Lista de nombres de marcas-modelo
 
 ```{python}
 #| label: lista-nombres-mym
@@ -2942,16 +2944,16 @@ df_tabset = pd.DataFrame(filas)
 show(df_tabset, classes="display compact", column_filters="header", order=[[0, "asc"], [2, "asc"]])
 ```
 
-## Tabla nomalizada de marcas-modelo más robados
+## Tabla homologada de marcas-modelo más robados
 
-Contiene la tabla filtrada y normalizada para las marcas-modelo de interés. Cruza los datos de la base de datos `SQL server` con los datos internos del análisis de más robados anterior y la información del informe trimestral de la AACH (contenidos en el archivo `Lista_de_marcas-modelo`). **Muestra todos los daros necesarios para el cálculo de las estadísticas de análisis**.
+Contiene la tabla filtrada y homologada para las marcas-modelo de interés. Cruza los datos de la base de datos `SQL server` con los datos internos del análisis de más robados anterior y la información del informe trimestral de la AACH (contenidos en el archivo `Lista_de_marcas-modelo`). **Muestra todos los daros necesarios para el cálculo de las estadísticas de análisis**.
 
 ```{python}
-#| label: df-normalizado
+#| label: df-homologado
 #| echo: true
 #| cache: true
 
-# ── Crear copia normalizada de df ──────────────────────────────────────────
+# ── Crear copia homologada de df ──────────────────────────────────────────
 # Para cada marca-modelo canónica en MYM, reemplazar todas las versiones
 # que coincidan con el patrón regex por el nombre canónico.
 
@@ -3002,11 +3004,11 @@ df_norm = df_norm.select(
 )
 
 print(f"[OK] df_norm creado: {df_norm.shape[0]} filas (df original: {df.shape[0]} filas)")
-pretty_table(df_norm, n=100, title="Tabla de datos filtrados y normalizados")
+pretty_table(df_norm, n=100, title="Tabla de datos filtrados y homologados")
 ```
 
 ```{python}
-#| label: Dashboard-normalizados
+#| label: Dashboard-homologados
 #| echo: true
 #| cache: true
 
@@ -3015,7 +3017,7 @@ df_panda0 = df_norm.to_pandas()
 # ---- Generar gráfico interactivo ----
 fig_interactivo = boxhist_interactivo(
     df_panda0, 
-    titulo="Características univariadas de la Tabla normalizada"
+    titulo="Características univariadas de la Tabla homologada"
 )
 
 fig_interactivo.show()
