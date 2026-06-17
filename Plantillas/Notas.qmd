@@ -1,0 +1,651 @@
+## Notas
+
+Ideas miscelaneas descartadas.
+
+-   Para encontrar Marcas_Modelo desagregadas en versiones distintas puede usarse:
+
+``` sql
+– Ejemplo caso FORD F-150.
+
+SELECT [MARCA_MODELO], COUNT(*) AS Cantidad
+FROM [Transaccional].[dbo].[Tablero_Motor_final]
+WHERE [MARCA_MODELO] LIKE 'FORD - F-150%'
+   OR [MARCA_MODELO] LIKE 'FORD - F - 150'
+GROUP BY [MARCA_MODELO];
+```
+
+Esto equivale a hacer en polars:
+
+``` python
+# Ejemplo caso FORD F-150.
+
+
+df_filt = df.filter(
+    pl.col("MARCA_MODELO").str.starts_with("FORD - F-150")
+    | (pl.col("MARCA_MODELO") == "FORD - F - 150")
+)
+
+pretty_tibble(df_filt)
+```
+
+-   Para normalizar distintas versiones de una misma marca-modelo puede usarse:
+
+``` sql
+- Homologado de marcas modelo de interés dentro de consulta.
+
+CASE
+    WHEN [MARCA_MODELO] LIKE 'FORD - F-150%'
+        OR [MARCA_MODELO] LIKE 'FORD - F - 150%'
+    THEN 'FORD - F-150'
+
+    WHEN [MARCA_MODELO] LIKE 'JEEP - GRAND%'
+    THEN 'JEEP - GRAND CHEROKEE'
+
+    WHEN [MARCA_MODELO] LIKE 'KIA MOTORS - FRONTIER%'
+    THEN 'KIA MOTORS - FRONTIER'
+
+    WHEN [MARCA_MODELO] LIKE 'MITSUBISHI - L-200%'
+    THEN 'MITSUBISHI - L-200'
+
+    WHEN [MARCA_MODELO] LIKE 'MITSUBISHI - MONTERO%'
+    THEN 'MITSUBISHI - MONTERO'
+
+    WHEN [MARCA_MODELO] LIKE 'TOYOTA - HI-LUX%'
+    THEN 'TOYOTA - HI-LUX'
+
+    WHEN [MARCA_MODELO] LIKE 'TOYOTA - SOUL%'
+    THEN 'TOYOTA - SOUL'
+
+    WHEN [MARCA_MODELO] LIKE 'FORD - TERRITORY%'
+    THEN 'FORD - TERRITORY'
+
+    WHEN [MARCA_MODELO] LIKE 'PEUGEOT - 301%'
+    THEN 'PEUGEOT - 301'
+
+    WHEN [MARCA_MODELO] LIKE 'PEUGEOT - 5008%'
+    THEN 'PEUGEOT - 5008'
+
+    WHEN [MARCA_MODELO] LIKE 'MAZDA - 3 SPORT%'
+    THEN 'MAZDA - 3 SPORT'
+
+    WHEN [MARCA_MODELO] LIKE 'CITROEN - C E%'
+        OR [MARCA_MODELO] LIKE 'CITROEN - C-ELYSEE'
+    THEN 'CITROEN - C-ELYSEE'
+
+    WHEN [MARCA_MODELO] LIKE 'MAZDA - CX3 4X2'
+        OR [MARCA_MODELO] LIKE 'MAZDA - CX-3'
+    THEN 'MAZDA - CX-3'
+
+    WHEN [MARCA_MODELO] LIKE 'FORD - EXPL%'
+    THEN 'FORD - EXPLORER'
+
+    WHEN [MARCA_MODELO] LIKE 'MAXUS - T60%'
+    THEN 'MAXUS - T60'
+
+    WHEN [MARCA_MODELO] LIKE 'MAHINDRA - XUV500%'
+        OR [MARCA_MODELO] LIKE 'MAHINDRA - XUV 500'
+    THEN 'MAHINDRA - XUV-500'
+
+    WHEN [MARCA_MODELO] LIKE 'HYUNDAI - ACCENT%'
+    THEN 'HYUNDAI - ACCENT'
+
+    WHEN [MARCA_MODELO] LIKE 'NISSAN - VERSA%'
+    THEN 'NISSAN - VERSA'
+
+    WHEN [MARCA_MODELO] LIKE 'CHEVROLET - GROOVE%'
+    THEN 'CHEVROLET - GROOVE'
+
+    WHEN [MARCA_MODELO] LIKE 'KIA MOTORS - SOLUTO%'
+    THEN 'KIA MOTORS - SOLUTO'
+
+    ELSE [MARCA_MODELO]
+END
+```
+
+- Intentando revertir la homologación
+
+``` python
+#| label: actualizar-bloqueos
+#| echo: true
+#| cache: true
+
+# import polars as pl
+
+
+def obtener_nombres_versiones_polars(
+    criterio: str,
+    df: pl.DataFrame,
+    col: str,
+    ignore_case: bool = True
+) -> pl.DataFrame:
+    """
+    Filtra un DataFrame de Polars para obtener las filas cuya columna `col`
+    coincide con el criterio de homologación usando el regex generado.
+    """
+    patron = generar_regex(criterio)
+
+    if ignore_case:
+        patron = rf"(?i){patron}"
+
+    return df.filter(
+        pl.col(col).str.contains(patron, literal=False)
+    )
+
+
+def obtener_versiones_bloqueadas(
+    df_sugerencias: pl.DataFrame,
+    df: pl.DataFrame,
+    col_criterio: str = "MARCA_MODELO",
+    col_flag: str = "PROPUESTA",
+    valor_bloquear: str = "BLOQUEAR",
+    col_versiones: str = "MARCA_MODELO",
+    ignore_case: bool = True,
+) -> pl.DataFrame:
+    """
+    A partir de:
+      - df_sugerencias: contiene criterios de homologación en `col_criterio`
+                        y la columna de propuesta `col_flag`
+      - df: contiene los nombres reales de las versiones en `col_versiones`
+
+    Devuelve un DataFrame con el detalle de versiones que matchean
+    cada criterio que tiene PROPUESTA == 'BLOQUEAR'.
+
+    Columnas de salida:
+      - MARCA_MODELO_CRITERIO : el criterio desde df_robos
+      - MARCA_MODELO_VERSION  : el nombre de la versión real desde df
+    """
+
+    # 1) Filtrar solo criterios con PROPUESTA == 'BLOQUEAR'
+    df_bloquear = df_robos.filter(
+        pl.col(col_flag) == valor_bloquear
+    )
+
+    # 2) Iterar sobre cada criterio y buscar sus versiones en df
+    resultados = []
+
+    for row in df_bloquear.iter_rows(named=True):
+        criterio = row[col_criterio]
+
+        # Aplicar la función definida antes
+        df_match = obtener_nombres_versiones_polars(
+            criterio=criterio,
+            df=df,
+            col=col_versiones,
+            ignore_case=ignore_case
+        )
+
+        if df_match.height > 0:
+            # Agregar columna con el criterio para saber de dónde viene
+            df_match = df_match.with_columns(
+                pl.lit(criterio).alias("MARCA_MODELO_CRITERIO")
+            ).rename({
+                col_versiones: "MARCA_MODELO_VERSION"
+            })
+
+            resultados.append(df_match)
+
+    # 3) Unir todos los resultados en un solo DataFrame
+    if resultados:
+        df_resultado = pl.concat(resultados)
+    else:
+        # Si no hubo ningún match, devolvemos un DataFrame vacío con columnas esperadas
+        df_resultado = pl.DataFrame(
+            {
+                "MARCA_MODELO_CRITERIO": pl.Series([], dtype=pl.Utf8),
+                "MARCA_MODELO_VERSION": pl.Series([], dtype=pl.Utf8),
+            }
+        )
+
+    return df_resultado
+
+
+# =========================
+# EJEMPLO DE USO
+# =========================
+if __name__ == "__main__":
+
+    df_bloqueadas = obtener_versiones_bloqueadas(
+        df_sugerencias=df_robos,
+        df=df,
+        col_criterio="MARCA_MODELO",
+        col_flag="PROPUESTA",
+        valor_bloquear="BLOQUEAR",
+        col_versiones="MARCA_MODELO",
+        ignore_case=True,
+    )
+
+    pretty_table(df_bloqueadas, n=100)
+```
+
+### Patron de homologación en SQL
+
+``` python
+#| label: actualizar-bloqueos-sql
+#| echo: true
+#| cache: true
+
+#from future import annotations
+
+#import re
+from dataclasses import dataclass
+
+#import polars as pl
+
+
+def _sql_escape_literal(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def _pat_escape_literal(value: str) -> str:
+    return (
+        value.replace("]", "[]]")
+        .replace("[", "[[]")
+        .replace("%", "[%]")
+        .replace("_", "[_]")
+    )
+
+
+def _sql_char_is_digit(expr: str) -> str:
+    return f"({expr} LIKE '[0-9]')"
+
+
+def _sql_char_is_letter(expr: str) -> str:
+    return f"({expr} LIKE '[A-Za-z]')"
+
+
+def _sql_no_digits(expr: str) -> str:
+    return f"(PATINDEX('%[0-9]%', {expr}) = 0)"
+
+
+def _sql_no_alnum(expr: str) -> str:
+    return f"(PATINDEX('%[0-9A-Za-z]%', {expr}) = 0)"
+
+
+def _sql_first_match_pos(expr: str, pat_literal: str) -> str:
+    return f"PATINDEX('%{pat_literal}%', {expr})"
+
+
+def _sql_safe_left(expr: str, len_expr: str, guard_expr: str) -> str:
+    return f"(CASE WHEN {guard_expr} THEN LEFT({expr}, {len_expr}) ELSE '' END)"
+
+
+def _sql_consume_trailing_digits(expr: str, start_expr_1based: str) -> str:
+    sub = f"SUBSTRING({expr}, {start_expr_1based}, 8000)"
+    pos_non_digit = f"PATINDEX('%[^0-9]%', {sub})"
+    consume = (
+        f"(CASE WHEN {pos_non_digit} = 0 "
+        f"THEN LEN({sub}) "
+        f"ELSE ({pos_non_digit} - 1) END)"
+    )
+    return f"({start_expr_1based} + {consume})"
+
+
+@dataclass(frozen=True)
+class TokenSpec:
+    anchor: bool
+    mod_num: bool
+    mod_let: bool
+    clean: str
+    is_strict_num: bool
+
+
+def _parse_token(token: str) -> TokenSpec:
+    token = token.strip()
+    if not token:
+        return TokenSpec(False, False, False, "", False)
+
+    anchor = token.startswith("$")
+    if anchor:
+        token = token[1:]
+
+    if not token:
+        raise ValueError("Token inválido: '$' sin contenido.")
+
+    ends_pct = token.endswith("%")
+    ends_amp = token.endswith("&")
+
+    if ends_pct and ends_amp:
+        raise ValueError(f"Token con modificadores incompatibles: {token!r}")
+
+    mod_num = ends_pct and token[:-1].isdigit()
+    mod_let = ends_amp and token[:-1] != "" and not token[:-1].isdigit()
+
+    if ends_pct and not mod_num:
+        raise ValueError(f"Uso inválido de '%': {token!r}")
+
+    if ends_amp and not mod_let:
+        raise ValueError(f"Uso inválido de '&': {token!r}")
+
+    if mod_num or mod_let:
+        token = token[:-1]
+
+    if not token:
+        raise ValueError("Token vacío después de procesar modificadores.")
+
+    is_strict_num = token.isdigit() and not mod_num
+
+    return TokenSpec(anchor, mod_num, mod_let, token, is_strict_num)
+
+
+def separar_marca_modelo(texto: str) -> tuple[str, str, str]:
+    partes_mm = texto.split("-", 1)
+    if len(partes_mm) != 2:
+        raise ValueError(f"Formato inválido (esperado 'MARCA-MODELO'): {texto!r}")
+
+    marca, modelo = [p.strip() for p in partes_mm]
+
+    partes = re.split(r"[-\s]+", modelo)
+    partes = [p for p in partes if p]
+
+    if not partes:
+        raise ValueError(f"No se pudo extraer modelo desde: {texto!r}")
+
+    if len(partes) == 1:
+        return marca, partes[0], ""
+
+    return marca, partes[0], "".join(partes[1:])
+
+
+def convertir_criterio_a_sql(
+    criterio: str,
+    marca_expr: str = "MR",
+    modelo_expr: str = "MD",
+) -> str:
+    marca, p1_raw, p2_raw = separar_marca_modelo(criterio)
+
+    t1 = _parse_token(p1_raw)
+    t2 = _parse_token(p2_raw) if p2_raw else TokenSpec(False, False, False, "", False)
+
+    marca_sql = _sql_escape_literal(marca.strip())
+    model = modelo_expr
+
+    conds: list[str] = [f"({marca_expr} = '{marca_sql}')"]
+
+    if not t1.clean:
+        return f"({' AND '.join(conds)})"
+
+    p1_sql = _sql_escape_literal(t1.clean)
+    p1_pat = _pat_escape_literal(t1.clean)
+    len_p1 = len(t1.clean)
+
+    if not t2.clean:
+        if t1.anchor:
+            pos_first_alnum = f"PATINDEX('%[0-9A-Za-z]%', {model})"
+            after_p1 = f"({pos_first_alnum} + {len_p1})"
+
+            checks = [
+                f"({pos_first_alnum} > 0)",
+                f"(SUBSTRING({model}, {pos_first_alnum}, {len_p1}) = '{p1_sql}')",
+            ]
+
+            if t1.mod_num:
+                after_p1 = _sql_consume_trailing_digits(model, after_p1)
+
+            if t1.mod_let:
+                checks.append(
+                    f"({after_p1} > LEN({model}) "
+                    f"OR NOT {_sql_char_is_letter(f'SUBSTRING({model}, {after_p1}, 1)')})"
+                )
+
+            conds.append(f"({' AND '.join(checks)})")
+            return f"({' AND '.join(conds)})"
+
+        if t1.is_strict_num:
+            pos_first_digit = f"PATINDEX('%[0-9]%', {model})"
+            after_p1 = f"({pos_first_digit} + {len_p1})"
+
+            checks = [
+                f"({pos_first_digit} > 0)",
+                f"(SUBSTRING({model}, {pos_first_digit}, {len_p1}) = '{p1_sql}')",
+                f"({after_p1} > LEN({model}) "
+                f"OR NOT {_sql_char_is_digit(f'SUBSTRING({model}, {after_p1}, 1)')})",
+            ]
+
+            conds.append(f"({' AND '.join(checks)})")
+            return f"({' AND '.join(conds)})"
+
+        if t1.mod_num:
+            conds.append(f"({model} LIKE '%{p1_pat}%')")
+            return f"({' AND '.join(conds)})"
+
+        if t1.mod_let:
+            pat_mid = f"(PATINDEX('%{p1_pat}[^A-Za-z]%', {model}) > 0)"
+            pat_end = f"({model} LIKE '%{p1_pat}')"
+            conds.append(f"({pat_mid} OR {pat_end})")
+            return f"({' AND '.join(conds)})"
+
+        conds.append(f"({model} LIKE '%{p1_pat}%')")
+        return f"({' AND '.join(conds)})"
+
+    p2_pat = _pat_escape_literal(t2.clean)
+    len_p2 = len(t2.clean)
+
+    pos_p1 = _sql_first_match_pos(model, p1_pat)
+    prefix = _sql_safe_left(model, f"({pos_p1} - 1)", f"{pos_p1} > 0")
+    prefix_rule = _sql_no_alnum(prefix) if t1.anchor else _sql_no_digits(prefix)
+
+    after_p1 = f"({pos_p1} + {len_p1})"
+    if t1.mod_num:
+        after_p1 = _sql_consume_trailing_digits(model, after_p1)
+
+    p1_suffix_rule = "1=1"
+    if t1.mod_let:
+        p1_suffix_rule = (
+            f"({after_p1} > LEN({model}) "
+            f"OR NOT {_sql_char_is_letter(f'SUBSTRING({model}, {after_p1}, 1)')})"
+        )
+
+    rem = f"SUBSTRING({model}, {after_p1}, 8000)"
+    pos_p2_rel = _sql_first_match_pos(rem, p2_pat)
+    between = _sql_safe_left(rem, f"({pos_p2_rel} - 1)", f"{pos_p2_rel} > 0")
+    between_rule = _sql_no_alnum(between) if t2.anchor else _sql_no_digits(between)
+
+    pos_p2 = f"({after_p1} + {pos_p2_rel} - 1)"
+    after_p2 = f"({pos_p2} + {len_p2})"
+
+    if t2.mod_num:
+        after_p2 = _sql_consume_trailing_digits(model, after_p2)
+
+    p2_strict_rule = "1=1"
+    if t2.is_strict_num:
+        p2_strict_rule = (
+            f"({after_p2} > LEN({model}) "
+            f"OR NOT {_sql_char_is_digit(f'SUBSTRING({model}, {after_p2}, 1)')})"
+        )
+
+    p2_suffix_rule = "1=1"
+    if t2.mod_let:
+        p2_suffix_rule = (
+            f"({after_p2} > LEN({model}) "
+            f"OR NOT {_sql_char_is_letter(f'SUBSTRING({model}, {after_p2}, 1)')})"
+        )
+
+    pair_checks = [
+        f"({pos_p1} > 0)",
+        prefix_rule,
+        p1_suffix_rule,
+        f"({pos_p2_rel} > 0)",
+        between_rule,
+        p2_strict_rule,
+        p2_suffix_rule,
+    ]
+
+    conds.append(f"({' AND '.join(pair_checks)})")
+    return f"({' AND '.join(conds)})"
+
+
+def _simplificar_sql(sql: str) -> str:
+    if not sql or not sql.strip():
+        return sql
+
+    s = sql.strip()
+    s = re.sub(r"[ \t]+", " ", s)
+    s = re.sub(r"\s*\n\s*", "\n", s)
+
+    for pat, repl in [
+        (r"\(\s*1\s*=\s*1\s*\)\s+AND\s+", ""),
+        (r"\s+AND\s+\(\s*1\s*=\s*1\s*\)", ""),
+        (r"\b1\s*=\s*1\b\s+AND\s+", ""),
+        (r"\s+AND\s+\b1\s*=\s*1\b", ""),
+    ]:
+        s = re.sub(pat, repl, s, flags=re.IGNORECASE)
+
+    s = re.sub(r"\n\s*OR\s*\n", "\nOR\n", s, flags=re.IGNORECASE)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+
+    return s.strip()
+
+
+def generar_condicion_sql(
+    df_sugerencias: pl.DataFrame,
+    propuesta_objetivo: str = "BLOQUEAR",
+    columna_propuesta: str = "PROPUESTA",
+    columna_criterio: str = "MARCA_MODELO",
+    marca_expr: str = "MR",
+    modelo_expr: str = "MD",
+) -> str:
+    criterios = (
+        df_sugerencias
+        .filter(pl.col(columna_propuesta) == propuesta_objetivo)
+        .select(columna_criterio)
+        .to_series()
+        .to_list()
+    )
+
+    conds = [
+        convertir_criterio_a_sql(
+            criterio=c,
+            marca_expr=marca_expr,
+            modelo_expr=modelo_expr,
+        )
+        for c in criterios
+    ]
+
+    if not conds:
+        return "(1 = 0)"
+
+    return _simplificar_sql("\nOR\n".join(conds))
+
+
+def generar_case_when_sql(
+    df_sugerencias: pl.DataFrame,
+    propuesta_objetivo: str = "BLOQUEAR",
+    columna_propuesta: str = "PROPUESTA",
+    columna_criterio: str = "MARCA_MODELO",
+    marca_expr: str = "MR",
+    modelo_expr: str = "MD",
+) -> str:
+    condicion = generar_condicion_sql(
+        df_sugerencias=df_sugerencias,
+        propuesta_objetivo=propuesta_objetivo,
+        columna_propuesta=columna_propuesta,
+        columna_criterio=columna_criterio,
+        marca_expr=marca_expr,
+        modelo_expr=modelo_expr,
+    )
+    return f"CASE WHEN {condicion} THEN 1 ELSE 0 END"
+
+
+def generar_case_when_sql(
+    df_sugerencias: pl.DataFrame,
+    propuesta_objetivo: str = "BLOQUEAR",
+    columna_propuesta: str = "PROPUESTA",
+    columna_criterio: str = "MARCA_MODELO",
+    marca_expr: str = "MR",
+    modelo_expr: str = "MD",
+) -> str:
+    condicion = generar_condicion_sql(
+        df_sugerencias=df_sugerencias,
+        propuesta_objetivo=propuesta_objetivo,
+        columna_propuesta=columna_propuesta,
+        columna_criterio=columna_criterio,
+        marca_expr=marca_expr,
+        modelo_expr=modelo_expr,
+    )
+    return f"CASE WHEN {condicion} THEN 1 ELSE 0 END"
+
+
+def construir_select_case_when_sql(
+    tabla_o_subquery: str,
+    df_sugerencias: pl.DataFrame,
+    propuesta_objetivo: str = "BLOQUEAR",
+    columna_propuesta: str = "PROPUESTA",
+    columna_criterio: str = "MARCA_MODELO",
+    nombre_columna_resultado: str = "FLAG_BLOQUEO",
+    columnas_select: str = "t.*",
+) -> str:
+    case_when = generar_case_when_sql(
+        df_sugerencias=df_sugerencias,
+        propuesta_objetivo=propuesta_objetivo,
+        columna_propuesta=columna_propuesta,
+        columna_criterio=columna_criterio,
+        marca_expr="MR",
+        modelo_expr="MD",
+    )
+
+    return (
+        f"SELECT {columnas_select},\n"
+        f"       {case_when} AS {nombre_columna_resultado}\n"
+        f"FROM {tabla_o_subquery} AS t\n"
+        f"CROSS APPLY (VALUES (RTRIM(t.MARCA), RTRIM(t.MODELO))) AS X(MR, MD)"
+    )
+
+
+
+sql_bloqueos = generar_case_when_sql(
+        df_sugerencias=df_robos
+    )
+
+print(sql_bloqueos)
+```
+
+``` python
+
+# Prueba de consulta con traducción automatizada de criterios rexgen a SQL
+
+query_2 = """
+SELECT
+    MARCA_MODELO,
+    COUNT(CRIT_ROBADOS)
+FROM (
+    SELECT
+        [MARCA_MODELO],
+        CRIT_ROBADOS = CASE
+            WHEN
+                -- CHEVROLET
+                (RTRIM(MARCA) = 'CHEVROLET' AND RTRIM(MODELO) LIKE '%GROOVE%')
+
+                -- FORD
+                OR (RTRIM(MARCA) = 'FORD' AND (RTRIM(MODELO) LIKE '%F%150%'
+                                               OR RTRIM(MODELO) LIKE '%TERRITORY%'))
+
+
+                -- KIA MOTORS
+                OR (RTRIM(MARCA) = 'KIA MOTORS' AND (RTRIM(MODELO) LIKE '%FRONTIER%'))
+
+                -- JAC (detecta T8)
+                OR (RTRIM(MARCA) = 'JAC' AND RTRIM(MODELO) LIKE '%T8%')
+
+
+                -- MITSUBISHI
+                OR (RTRIM(MARCA) = 'MITSUBISHI' AND (RTRIM(MODELO) LIKE '%L-200%'))
+
+                -- TOYOTA
+                OR (RTRIM(MARCA) = 'TOYOTA' AND (
+                            RTRIM(MODELO) LIKE '%FORTUNER%'
+                         OR RTRIM(MODELO) LIKE '%HI%LUX%'
+                         OR RTRIM(MODELO) LIKE '%LAND CRUISER%'
+                ))
+            THEN 1
+            ELSE 0
+        END
+    FROM [Transaccional].[dbo].[Tablero_Motor_final]
+) AS T
+WHERE T.CRIT_ROBADOS = 1
+GROUP BY [MARCA_MODELO];
+"""
+
+df_final = query_to_df(query_2, engine="polars")
+
+pretty_table(df_final, n=100)
+```

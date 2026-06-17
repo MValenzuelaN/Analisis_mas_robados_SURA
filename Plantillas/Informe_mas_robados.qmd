@@ -1,0 +1,2234 @@
+---
+title: "Marcas-modelo más robados del último trimestre"
+subtitle: "Análisis exploratorio de datos"
+author: "Matías Valenzuela Nuche"
+lang: es
+date: last-modified
+date-format: long
+
+# Kernel
+jupyter: python3
+
+# --- PARAMETRIZACION ---
+# Define aqui las variables que controlan tu informe
+params:
+ mostrar_codigo: true
+ color_grafico: "blue"
+
+# Comportamiento global de las celdas
+execute:
+ echo: true
+ warning: false
+ error: false
+ cache: false
+
+format:
+ html:
+  theme: flatly
+  page-layout: full
+  toc: true
+  toc-location: left
+  toc-title: "Contenido"
+  toc-depth: 3
+  toc-expand: true
+  number-sections: true
+  number-depth: 3
+  smooth-scroll: true
+  embed-resources: true
+  fig-cap-location: bottom
+  tbl-cap-location: top
+  code-fold: true
+  code-summary: "Ver código"
+  code-tools:
+   source: true
+   toggle: false
+   caption: "Código fuente"
+  code-line-numbers: true
+  code-link: true
+  highlight-style: atom-one
+  html-math-method: katex
+  link-external-icon: true
+  link-external-newwindow: true
+css: "css/styles.css"
+
+title-block-banner: true
+editor: source
+---
+
+::: {.callout-note icon="true"}
+## Resumen
+
+Este *informe automatizado* desarrolla un análisis exploratorio de datos (AED) de las Marcas-Modelo más robadas en el último trimestre, con base en información de la lista de **bloqueados** y **agravados** del análisis anterior, junto con la lista proporcionada por el informe trimestral de la AACH. La finalidad está en detallar y justificar cualquier modificación necesaria para Bloquear o Monitorear la suscripción de estas clases de vehículos.
+:::
+
+::::::: panel-tabset
+## Contexto del informe
+
+Este informe analiza los registros de la base de datos `Tablero_Motor_final` del último trimestre para actualizar la lista de marcas-modelo **bloqueadas** y **monitoreadas** por SURA a raíz de su alta siniestralidad y cantidad de robos. LA lista de marcas.modelo de interés se obtiene de las 2 tablas siguientes:
+
+![Ejemplo de lista de bloqueos y monitoreos anterior de SURA respecto a las marcas-modelo más robadas.](insumo-mas-robados.png)
+
+![Ejemplo de tablas del informe de la AACH.](tablas_AACH.png)
+
+A partir de esto, el informe pasa por una serie de procesos automatizados hasta generar el nuevo excel con la lista actualizada. El siguiente diagrama resume el flujo de los datos hasta el resultado final generado por este informe técnico (que llega hasta la `Tabla de sugerencias automáticas`) en conjunto con el informe de resultados (donde se genera el `excel de resultados`):
+
+```{mermaid}
+%%| echo: true
+flowchart TD
+    %% --- Inicio ---
+    S([Inicio])
+
+    %% --- Entradas / Fuentes ---
+    A[/Informe trimestral de la AACH/]
+    B[/Análisis anterior más robados SURA/]
+    C[/Tabla motor final/]
+    D["(Lista más robados*)"]
+    E["(Tabla inicial)"]
+    H["(Tabla homologada)"]
+    I["(Tabla de métricas de siniestralidad)"]
+    J["(Tabla de sugerencias automáticas)"]
+    K1["(Entregable Excel**)"]
+    K2["[Cuadro de interpretaciones automáticas]"]
+    L[(Transaccional)]
+    P4[Algoritmo de sugerencias automáticas]
+    P5[Algoritmo de creación automatizada de formato de entrega]
+    G["[Tabla de validación]"]
+    F{¿Homologación OK?}
+
+    %% --- Flujo principal ---
+    S --> A -->|Agregar lista de la AACH y tasas promedio de robos| D
+    S --> B -->|Agregar lista interna de bloqueados y monitoreados actuales| D
+
+    S --> L --> C -->|Extracción y limpieza preliminar| E
+    E -->|Aporte de versiones de marcas-modelo y metricas portafolio| F
+    D -->|Aporte de lista de marcas-modelo| F
+
+    %% --- Ciclo de homologación + validación ---
+    F -->|No: revisar nombres versiones| G -->|Homologar y filtrar| F
+    F -->|Sí| H
+
+    %% --- Enriquecimiento desde Excel a normalizada ---
+    D -->|Agregar estados de suscripción y tasas promedio de robos| H
+
+    %% --- Análisis y sugerencias ---
+    H -->|Calcular métricas de siniestralidad| I --> P4 --> J
+
+    %% --- Bloqueos forzados como regla de negocio ---
+    D -->|Aplicar indicaciones| J
+
+    %% --- Salida final ---
+    J --> P5
+    P5 --> K2
+    P5 --> K1
+    %% --- Fin ---
+    K1 --> T([Fin])
+    K2 --> T
+```
+
+(\*) El excel se llama `Lista_de_marcas-modelo.xlsx`, es un archivo creado manualmente. Para ingresar los nombres de las marcas-modelo puede hacer falta conocer el uso de símbolos clave como `$`, `%` o `&` dentro del patrón de homologación.
+
+(\*\*) Algunos nombres de modelo pueden necesitar cambios, ya que se imprimirá la nomenclatura usarda para la homologación (puede contener símbolos extraños como `$`, `%` o `&`).
+
+::: {.callout-caution collapse="true"}
+## Usos y necesidad de actualización de archivos del proyecto
+
+:::
+
+## Configuración del Entorno
+
+Antes de comenzar el análisis, verifiquemos que el entorno está correctamente configurado y que todas las dependencias están disponibles.
+
+::: panel-tabset
+## Librerías
+
+Carga de librerias y configuración inicial para del informe.
+
+```{python}
+#| label: imports-config
+#| echo: true
+#| cache: true
+
+from __future__ import annotations
+
+import base64
+from IPython.utils.capture import capture_output
+import math
+import re
+import sys
+from typing import Any, List, Dict, Optional, Sequence, Union, Tuple
+from itables import show
+
+import io
+from io import StringIO
+
+import os
+from os import path
+
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.styles.colors import Color
+from openpyxl.utils import get_column_letter
+from datetime import datetime
+import zipfile, shutil, os
+
+import numpy as np
+import polars as pl
+import pandas as pd  # Solo para compatibilidad con Plotly
+from pyspark.sql import SparkSession
+import pyodbc
+from pathlib import Path
+
+# print(pyodbc.drivers()) # Comprobar Drivers
+
+# Configuración de parámetros (equivalente a params en R)
+# Nota: En Python/Quarto, los params del YAML no están disponibles automáticamente
+PARAMS = {
+    #'titulo_reporte': 'Análisis de Datos',
+    #'seed': 42,
+    #'n_muestras': 100,
+    'mostrar_codigo': True,
+    'color_grafico': 'blue'
+}
+
+# Forzar modo offline para Plotly (evita descargas de CDN)
+import plotly.offline as py_offline
+import plotly.io as pio
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from scipy import stats as sp_stats
+
+pio.renderers.default = "notebook" # o "iframe" / "browser" dependiendo de lo que Quarto prefiera, pero para HTML estático:
+# Quarto maneja plotly automágicamente, pero esto ayuda a veces:
+py_offline.init_notebook_mode(connected=False)
+
+# Configuración necesaria para PrettyTibble
+from IPython.display import HTML, display
+
+# Configuración de reproducibilidad
+SEED = PARAMS.get('seed', None)  # devuelve None si no existe 'seed'
+
+if SEED is None:
+    print("[OK] Librerías cargadas. Sin semilla definida.")
+else:
+    import numpy as np
+    np.random.seed(SEED)
+    print(f"[OK] Librerías cargadas. Semilla: {SEED}")
+```
+
+## Conexión SQL Server
+
+Establece conexión con los servidores de `SQL Server` mediante autenticación automática de Windows. El informe puede generarse de todos modos si tiene las tablas de datos necesarias disponibles en la carpeta del proyecto.
+
+```{python}
+#| label: configuración SQL-SERVER
+#| echo: true
+#| cache: true
+
+# import pyodbc
+
+connection_string = (
+    "DRIVER={ODBC Driver 18 for SQL Server};"
+    "SERVER=SGF1025;"
+    "DATABASE=Transaccional;"
+    "Trusted_Connection=yes;"
+    "Encrypt=no;"
+)
+
+try:
+    conn = pyodbc.connect(connection_string)
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 AS test_col;")
+
+    row = cursor.fetchone()
+
+    if list(row) == [1]:
+        print("[OK] Conexión establecida con éxito.")
+    else:
+        print("[WARN] Conexión establecida, pero la prueba devolvió un valor inesperado.")
+
+    cursor.close()
+    conn.close()
+except Exception as e:
+    print(f"[WARN] No se pudo conectar a SQL Server: {e}")
+    print("       El informe usará los archivos CSV locales si están disponibles.")
+```
+
+{{< include utilidades.qmd >}}
+
+## Tabla de datos inicial
+
+Vista parcial de la tabla de datos resultante de la consulta `SQL` a la base de datos de `SQL server`. Guarda la tabla de datos en formato `parquet` una vez la obtiene y detecta si esta ya existe dentro del proyecto para no ejecutarse innecesariamente.
+
+```{python}
+#| label: Dataframe
+#| echo: true
+#| cache: true
+
+# import polars as pl
+# from pathlib import Path
+# from datetime import datetime
+import os
+from os import path
+
+# --- Resolver rutas ---
+
+# PROJECT_ROOT = Path(os.environ["PROJECT_ROOT"]).resolve()  # Para ejecución desde orquestador
+
+PROJECT_ROOT = Path.cwd().resolve().parents[0]  # Para ejecución desde notebook
+
+DATA_DIR = PROJECT_ROOT / "Entradas" / "Tabla_de_datos"
+
+print("PROJECT_ROOT:", PROJECT_ROOT)
+print("DATA_DIR:", DATA_DIR, "exists:", DATA_DIR.exists())
+
+# Nombre del archivo en formato Parquet
+parquet_path = DATA_DIR / "Tabla_robados.parquet"
+
+
+print("CWD:", Path.cwd())
+print("Parquet path:", parquet_path.resolve())
+
+
+# Calcular dinámicamente los 3 últimos cuatrimestres (correspondientes a trimestres Q1-Q4)
+hoy = datetime.now()
+año = hoy.year
+trimestre_actual = (hoy.month - 1) // 3 + 1
+
+trimestres_lista = []
+for _ in range(3):
+    trimestre_actual -= 1
+    if trimestre_actual == 0:
+        trimestre_actual = 4
+        año -= 1
+    trimestres_lista.append(f"'{año}Q{trimestre_actual}'")
+
+trimestres_lista.reverse()
+str_trimestres = ", ".join(trimestres_lista)
+
+print(f"[INFO] Cuatrimestres detectados para el análisis: {str_trimestres}")
+
+if not parquet_path.exists():
+    # Si NO existe el archivo, ejecutamos el query y generamos el Parquet
+    query = f"""
+    SELECT
+        [MARCA_MODELO],
+        [LINEA_NEGOCIO],
+        SUM([ULT_ROBO]) AS Total_Ulti_Robo,
+        SUM([CANT_ULT_ROBO]) AS Cantidad_Ulti_Robo,
+        SUM([ULT_DP]) AS Total_Ulti_DP,
+        SUM([CANT_ULT_DP]) AS Cantidad_Ulti_DP,
+        SUM([ULT_PT]) AS Total_Ulti_PT,
+        SUM([CANT_ULT_PT]) AS Cantidad_Ulti_PT,
+        SUM([ULT_RC]) AS Total_Ulti_RC,
+        SUM([CANT_ULT_RC]) AS Cantidad_Ulti_RC,
+        SUM([ULT_TOTAL]) AS Total_Ulti_TOTAL,
+        SUM([CANT_ULT_TOTAL]) AS Cantidad_Ulti_TOTAL,
+        SUM([EXPOS]) AS Suma_Expuestos,
+        SUM([PRIMA_DEV]) AS Total_Prima_Deveng
+    FROM [Transaccional].[dbo].[Tablero_Motor_final]
+    WHERE (PERIODO) IN ({str_trimestres})
+    GROUP BY
+        [MARCA_MODELO],
+        [LINEA_NEGOCIO];
+    """
+
+    # Asumo que query_to_df ya te devuelve un DataFrame de Polars
+    df = query_to_df(query, engine="polars")
+
+    # Guardar en Parquet
+    df.write_parquet(parquet_path)
+    print(f"Tabla creada desde query de SQL Server para los periodos {str_trimestres}. Guardado como `Tabla_robados.parquet`.")
+else:
+    # Si SÍ existe el archivo, solo lo cargamos desde Parquet
+    df = pl.read_parquet(parquet_path)
+    print("Cargando DataFrame desde `Tabla_robados.parquet`.")
+
+# Ordenar el DataFrame
+df = df.sort("Cantidad_Ulti_Robo", descending=True)
+
+# Mostrar tabla bonita
+pretty_table(df)
+```
+
+{{< include NOTAS.qmd >}}
+
+:::
+
+## Preparación de la tabla de datos
+
+Observamos la estructura de la tabla de datos inicial. Esta se obtuvo mediante la consuta directa al servidor `Tablero_Motor_final`.
+
+```{python}
+#| label: Dataframe_base
+#| echo: true
+#| cache: true
+
+Tamaño_base = df.estimated_size()
+
+pretty_table(df, n=8)
+```
+
+Indicadores estadísticos.
+
+```{python}
+#| label: Descriptivos_base
+#| echo: true
+#| cache: true
+
+pretty_table(df.describe())
+```
+
+## Limpieza preliminar
+
+Filtrado preliminar. Se eliminan nombres de `MARCA_MODELO` ininteligibles (como "`NA`" o "`-`") y **se considera solo la la LINEA DE NEGOCIO: Personal**. También se visualizan algunas estadísticas univariadas de la tabla.
+
+```{python}
+#| label: Limpieza-tabla-base
+#| echo: true
+#| cache: true
+
+# Solo considerar Personal
+df = df.filter(pl.col("LINEA_NEGOCIO") == "Personal")
+df = df.drop(pl.col("LINEA_NEGOCIO"))
+
+# Eliminar filas donde MARCA_MODELO es nulo o "-"
+df = df.filter(
+    pl.col("MARCA_MODELO").is_not_null() &  # no nulo
+    (pl.col("MARCA_MODELO") != "-")        # distinto de "-"
+)
+
+pretty_table(df.describe())
+```
+
+## Homologación de marcas-modelo
+
+Esta sección muestra una tabla dinámica de marcas-modelo con el fin de validar si se están considerando todas las versiones relevantes para el análisis y excluyendo las equívocas. Las **versiones** son especies del genero **marca-modelo**, por ello, se ingresan con nombres similares que contienen las palabras clave que componen el nombre de la marca-modelo.
+
+**Primera columna**: aparecen los nombres de la marca-modelo de interés.
+
+**Segunda columna:** se muestran los nombres únicos de todas las versiones detectadas utilizando el *patrón general utilizado para detectar las versiones de una marca-modelo*, esta es la lista de versiones considerada correcta y que utiliza internamente el informe automatizado para construir metricas de las marcas-modelo y sus valores, por lo que debe procurarse de que contenga todas y solo las versiones relevantes.
+
+**Tercera columna**: se muestra la lista de los nombres de las versiones "sucia", es decir, una que no considera un patrón automatizado para detectar las versiones, sino que utiliza cualquier nombre único que contenga las palabras clave de la marca-modelo, incluyendo tanto las versiones de la marca-modelo de interés, como otras que tendrían que filtrarse por ser equívocas.
+
+-   **El método de validación es**: comparar los valores de las columnas de la tabla dinámica desplegada para comprobar que todas las versiones corerctas de la marca-modelo de interés que aparecen en la columna "sucia" (la tercera) aparezcan también en la columna que usa el informe (la segunda) y que se excluyan las equívocas.
+
+::: {.callout-caution collapse="true"}
+## El *patrón general utilizado para detectar las versiones de una marca–modelo*
+
+Es, conceptualmente:
+
+```
+{marca_esc}\s*-{bloque_intermedio_1}{p1_esc}{bloque_intermedio_2}{p2_esc}
+```
+
+donde:
+
+-   `marca_esc` es la marca escapada para regex.
+-   `p1_esc` y `p2_esc` son las partes del modelo (`p1` y `p2`) escapadas.
+-   `bloque_intermedio_1` es lo que puede aparecer entre la marca y `p1`.
+-   `bloque_intermedio_2` es lo que puede aparecer entre `p1` y `p2`.
+
+y funciona según las siguientes reglas:
+
+------------------------------------------------------------------------
+
+### **Separación MARCA – MODELO**
+
+Se asume el formato **"MARCA - MODELO"**.\
+La marca y el modelo se separan **solo por el primer guion**.\
+El uso de `\s*` en el patrón permite cualquier cantidad de espacios alrededor del guion.
+
+------------------------------------------------------------------------
+
+### **Partes del modelo: p1 y p2**
+
+El MODELO se divide en:
+
+-   **p1**: primera parte
+-   **p2**: el resto, si existe
+
+Sin espacios ni guiones internos.
+
+#### **Reglas para valores numéricos estrictos**
+
+Si `p1` o `p2` es numérico puro (ejemplo: `"200"`, `"30"`, `"50"`):
+
+-   No puede estar **seguido inmediatamente** por otro dígito.
+-   No puede estar **precedido inmediatamente** por un dígito.
+
+Esto evita coincidencias indeseadas, como p1 = `"3"` dentro de `"30"` o `"13"`.
+
+#### **Excepción con sufijo `%`**
+
+Si `p1` o `p2` termina en `%`:
+
+-   Se **elimina** el `%` para construir el patrón.
+-   Se permite que vengan **más dígitos** después del número.
+
+Ejemplo:\
+`200%` coincide con `200`, `2000`, `20050`, etc.
+
+#### **Excepción con sufijo `&`**
+
+Si `p1` o `p2` termina en `&` **y no es numérico**:
+
+-   Se **elimina** el `&` para construir el patrón.
+-   Se exige que la última letra **no esté seguida inmediatamente por otra letra**.
+
+#### **Prefijo `$` (ancla estricta)**
+
+Si `p1` o `p2` comienza con `$`:
+
+-   La parte debe ser el **primer carácter alfanumérico** después del guion.
+-   No se permiten letras ni números antes de esa parte.
+
+Ejemplo con `$A`:
+
+-   ✔ Se permite: `"MAZDA - A"`, `"MAZDA - AQEF"`, `"MAZDA - A200"`
+-   ✘ No se permite: `"MAZDA - CAP"`, `"MAZDA - 1A"`, `"MAZDA - XA"`
+
+------------------------------------------------------------------------
+
+### **Bloques intermedios entre marca, p1 y p2**
+
+Se usan dos bloques intermedios:
+
+-   `between_marca_p1`: entre la marca y p1
+-   `between_p1_p2`: entre p1 y p2
+
+#### **Reglas**
+
+-   **Si no hay ancla (`$`)**: se permiten **no-dígitos**.
+-   **Si hay ancla**: no se permiten **letras ni números**.
+:::
+
+```{python}
+#| label: Versiones-automatizado
+#| echo: true
+#| cache: true
+#| result: asis
+
+# import re
+
+def separar_marca_modelo(texto: str):
+    # 1) Separar marca y modelo SOLO por el primer "-"
+    marca, modelo = [p.strip() for p in texto.split('-', 1)]
+
+    # 2) Dividir el modelo en partes por "-" o espacio " "
+    #    [-\s]+  => uno o más guiones o espacios
+    partes = re.split(r"[-\s]+", modelo)
+    partes = [p for p in partes if p]  # quitar strings vacíos
+
+    if len(partes) == 1:
+        parte1 = partes[0]
+        parte2 = ""
+    elif len(partes) >= 2:
+        parte1 = partes[0]
+        # juntar el resto SIN espacios (como en tu código original)
+        parte2 = "".join(partes[1:])
+    else:
+        raise ValueError(f"No se puede separar: {texto}")
+
+    return marca, parte1, parte2
+
+
+def generar_regex(texto: str) -> str:
+    marca, p1, p2 = separar_marca_modelo(texto)
+
+    marca_esc = re.escape(marca.strip())
+
+    # --- LÓGICA: $ como "ancla" (sin letras/num antes) ---
+    p1_anchor = False
+    p2_anchor = False
+
+    if p1 and p1.startswith("$"):
+        p1_anchor = True
+        p1 = p1[1:]  # quitamos el $
+    if p2 and p2.startswith("$"):
+        p2_anchor = True
+        p2 = p2[1:]  # quitamos el $
+
+    # --- LÓGICA DE EXCEPCIÓN: sufijos % y & ---
+    p1_mod_num = False
+    p1_mod_let = False
+    if p1:
+        if p1.endswith('%') and p1[:-1].isdigit():
+            p1 = p1[:-1]  # Quitamos el %
+            p1_mod_num = True
+        elif p1.endswith('&') and not p1[:-1].isdigit():  # & (no &amp;)
+            p1 = p1[:-1]  # Quitamos el &
+            p1_mod_let = True
+
+    p2_mod_num = False
+    p2_mod_let = False
+    if p2:
+        if p2.endswith('%') and p2[:-1].isdigit():
+            p2 = p2[:-1]
+            p2_mod_num = True
+        elif p2.endswith('&') and not p2[:-1].isdigit():
+            p2 = p2[:-1]
+            p2_mod_let = True
+
+    # Escapamos los textos limpios (sin %, &, $)
+    p1_esc = re.escape(p1) if p1 else ""
+    p2_esc = re.escape(p2) if p2 else ""
+
+    # === EXCEPCIONES sin lookahead (Polars compatible) ===
+    if p1_mod_num:
+        p1_esc += r"\d*"              # permite más dígitos después
+    elif p1_mod_let:
+        p1_esc += r"(?:[^A-Za-z]|$)"  # NO permite letra inmediatamente después
+
+    if p2_mod_num:
+        p2_esc += r"\d*"
+    elif p2_mod_let:
+        p2_esc += r"(?:[^A-Za-z]|$)"
+
+    # Numéricos estrictos (si no están modificados por %)
+    p1_is_strict_num = p1.isdigit() and not p1_mod_num
+    p2_is_strict_num = p2.isdigit() and not p2_mod_num
+
+    # ===== CASO 1: solo hay p1 =====
+    if not p2:
+        if p1_anchor:
+            # Anclado: sin letras ni números antes de p1
+            # Ej: MAZDA - $A  ->  MAZDA\s*-[^A-Za-z0-9]*A.*
+            patron = rf"{marca_esc}\s*-[^A-Za-z0-9]*{p1_esc}.*"
+        elif p1_is_strict_num:
+            # Regla original estricta para números
+            patron = rf"{marca_esc}\s*-[^0-9]*{p1_esc}(?:\D|$)"
+        else:
+            # Patrón más simple (no anclado)
+            patron = rf"{marca_esc}\s*-.*{p1_esc}"
+        return patron
+
+    # ===== CASO 2: hay p1 y p2 =====
+
+    # Si p2 es numérico estricto, le agregamos la restricción de fin/no dígito
+    if p2_is_strict_num:
+        p2_esc = rf"{p2_esc}(?:\D|$)"
+
+    # Bloques intermedios:
+    # - entre marca y p1
+    # - entre p1 y p2
+    # Si está anclado, no se permiten letras ni números en ese tramo
+    between_marca_p1 = r"[^A-Za-z0-9]*" if p1_anchor else r"[^0-9]*"
+    between_p1_p2    = r"[^A-Za-z0-9]*" if p2_anchor else r"[^0-9]*"
+
+    patron = (
+        rf"{marca_esc}.*-"
+        rf"{between_marca_p1}{p1_esc}"
+        rf"{between_p1_p2}{p2_esc}"
+    )
+    return patron
+
+
+def limpiar_simbolos(parte: str) -> str:
+    """
+    Elimina los símbolos $, % y & de la parte recibida.
+    Si parte es None o vacío, devuelve "".
+    """
+    if not parte:
+        return ""
+    # Elimina los caracteres $ % &
+    return re.sub(r'[\$\%&]', '', parte)
+
+
+def generar_regex_sucio(texto: str) -> str:
+    """
+    Genera un patrón regex simple del tipo:
+        marca.*-.*p1.*p2
+
+    - Limpia los símbolos $, % y & de marca, p1 y p2.
+    - Escapa los valores para que no rompan el regex.
+    - Maneja casos donde falten p1 o p2.
+    """
+    marca, p1, p2 = separar_marca_modelo(texto)
+
+    # 1) Limpiamos símbolos especiales primero
+    marca = limpiar_simbolos(marca)
+    p1    = limpiar_simbolos(p1)
+    p2    = limpiar_simbolos(p2)
+
+    # 2) Escapamos por seguridad
+    marca_esc = re.escape(marca) if marca else ""
+    p1_esc    = re.escape(p1)    if p1    else ""
+    p2_esc    = re.escape(p2)    if p2    else ""
+
+    # 3) Armamos el patrón según lo que haya
+    if marca_esc and p1_esc and p2_esc:
+        # marca.*-.*p1.*p2
+        return rf"{marca_esc}.*-.*{p1_esc}.*{p2_esc}"
+    elif marca_esc and p1_esc:
+        # marca.*-.*p1
+        return rf"{marca_esc}.*-.*{p1_esc}"
+    elif marca_esc:
+        # marca.*-.*
+        return rf"{marca_esc}.*-.*"
+    else:
+        # Caso extremo: no se pudo extraer nada útil
+        return r".*"
+
+
+# Ruta al archivo Excel
+ruta_archivo = PROJECT_ROOT / "Lista_de_marcas-modelo.xlsx"
+
+# 1. Leer Excel: fila 2 (índice 1) como encabezado -> B2/C2 son nombres de columnas
+df_de_excel = pd.read_excel(
+    ruta_archivo,
+    sheet_name=0,
+    header=1
+)
+
+# 2. Convertir a DataFrame de polars
+df_de_excel = pl.from_pandas(df_de_excel)
+
+# 3. Identificar columnas B y C por posición
+col_b = df_de_excel.columns[1]  # segunda columna (B)
+col_c = df_de_excel.columns[2]  # tercera columna (C)
+col_d = df_de_excel.columns[3]  # cuarta columna (D)
+col_e = df_de_excel.columns[4]  # quinta columna (E)
+col_f = df_de_excel.columns[5]  # sexta columna (F)
+col_g = df_de_excel.columns[6]  # séptima columna (G)
+
+# 4. Guardar columna B en una lista de Python (MYM)
+MYM = df_de_excel.select(pl.col(col_b)).to_series().to_list()
+
+# 5. Crear un DataFrame de polars sólo con las columnas B, C, D, E, F y G
+df_bc = df_de_excel.select([pl.col(col_b), pl.col(col_c), pl.col(col_d), pl.col(col_e), pl.col(col_f), pl.col(col_g)])
+```
+
+::: {.callout-note collapse="true"}
+## Lista de nombres de marcas-modelo
+
+```{python}
+#| label: lista-nombres-mym
+#| echo: true
+#| cache: true
+
+df_mym_lista = pl.DataFrame({"Marca modelo": MYM})
+pretty_table(df_mym_lista, n=100)
+```
+:::
+
+```{python}
+#| label: panel-versiones-mym
+#| echo: true
+#| cache: true
+#| results: asis
+
+#import pandas as pd
+#import polars as pl
+#import re
+#from itables import show
+
+filas = []
+
+for variable in MYM:
+    # 1. Patrones regex
+    patron = generar_regex(variable)
+    patron_ci = rf"(?i){patron}"  # CI = case-insensitive
+
+    patron_sucio = generar_regex_sucio(variable)
+    patron_ci_sucio = rf"(?i){patron_sucio}"  # CI = case-insensitive
+
+    # 2. Filtrado de marcas-modelo según patrón sucio (el superconjunto)
+    df_filt_sucio = df.filter(
+        pl.col("MARCA_MODELO").str.contains(patron_ci_sucio)
+    )
+
+    versiones_sucias = df_filt_sucio.select("MARCA_MODELO").unique().to_series().to_list()
+
+    for v_sucia in versiones_sucias:
+        # Verificamos si la versión sucia cumple también con el patrón limpio
+        if re.search(patron_ci, v_sucia):
+            v_limpia = v_sucia
+        else:
+            v_limpia = None
+
+        filas.append({
+            "Marca modelo": variable,
+            "Versión limpia": v_limpia,
+            "Versión sucia": v_sucia
+        })
+
+# Generar DataFrame final
+df_tabset = pd.DataFrame(filas)
+
+# Mostrar la tabla interactiva usando itables
+show(df_tabset, classes="display compact", column_filters="header", order=[[0, "asc"], [2, "asc"]])
+```
+
+## Tabla homologada de marcas-modelo más robados
+
+Contiene la tabla filtrada y homologada para las marcas-modelo de interés. Cruza los datos de la base de datos `SQL server` con los datos internos del análisis de más robados anterior y la información del informe trimestral de la AACH (contenidos en el archivo `Lista_de_marcas-modelo`). **Muestra todos los daros necesarios para el cálculo de las estadísticas de análisis**.
+
+```{python}
+#| label: df-homologado
+#| echo: true
+#| cache: true
+
+# ── Crear copia homologada de df ──────────────────────────────────────────
+# Para cada marca-modelo canónica en MYM, reemplazar todas las versiones
+# que coincidan con el patrón regex por el nombre canónico.
+
+df_norm = df.clone()
+
+for variable in MYM:
+    patron = generar_regex(variable)
+    df_norm = df_norm.with_columns(
+        pl.when(
+            pl.col("MARCA_MODELO").str.contains(rf"(?i){patron}")
+        )
+        .then(pl.lit(variable))
+        .otherwise(pl.col("MARCA_MODELO"))
+        .alias("MARCA_MODELO")
+    )
+
+# Re-agrupar sumando las columnas numéricas (mantiene la agrupación original)
+cols_grupo = ["MARCA_MODELO"]
+cols_numericas = [c for c in df_norm.columns if c not in cols_grupo]
+
+df_norm = (
+    df_norm
+    .group_by(cols_grupo)
+    .agg([pl.col(c).sum() for c in cols_numericas])
+    .sort("Cantidad_Ulti_Robo", descending=True)
+)
+
+df_norm = df_norm.filter(
+    pl.col("MARCA_MODELO").is_in(MYM)
+    )
+
+
+# Hacer el join
+df_norm = df_norm.join(
+    df_bc.select(["MARCA_MODELO", "ESTADO SUSCRIPCION", "Promedio Tasa Frecuencia Robo (AACH)"]),
+    on="MARCA_MODELO",
+    how="left"
+)
+
+# Reordenar columnas: ESTADO SUSCRIPCION como segunda columna
+df_norm = df_norm.select(
+    [
+        pl.col("MARCA_MODELO"),        # 1ra columna
+        pl.col("ESTADO SUSCRIPCION"), # 2da columna
+        pl.col("Promedio Tasa Frecuencia Robo (AACH)"),
+        pl.exclude(["MARCA_MODELO", "ESTADO SUSCRIPCION", "Promedio Tasa Frecuencia Robo (AACH)"])
+    ]
+)
+
+print(f"[OK] df_norm creado: {df_norm.shape[0]} filas (df original: {df.shape[0]} filas)")
+pretty_table(df_norm, n=100, title="Tabla de datos filtrados y homologados")
+```
+
+```{python}
+#| label: Dashboard-homologados
+#| echo: true
+#| cache: true
+
+df_panda0 = df_norm.to_pandas()
+
+# ---- Generar gráfico interactivo ----
+fig_interactivo = boxhist_interactivo(
+    df_panda0,
+    titulo="Características univariadas de la Tabla homologada"
+)
+
+fig_interactivo.show()
+```
+:::::::
+
+## Métricas de siniestros más robados
+
+Tabla de análisis de métricas de siniestros para las marcas-modelo más robados. (`LR`, `Frec` y `Promedio Tasa Frecuencia Robo (AACH)` están en porcentaje).
+
+-   **Azul**: Actualmente bloqueada.
+-   **Roja**: Actualmente monitoreada.
+-   **Amarilla**: Solo destacada en el informe de la AACH.
+
+```{python}
+#| label: df-robos
+#| echo: true
+#| cache: true
+
+# import polars as pl
+
+# ── Crear df_robos a partir de df_norm ─────────────────────────────────────
+# Calcula Frecuencia, Severidad y Loss Ratio para cada cobertura.
+#   Freq_{algo}      = Cantidad_Ulti_{algo} / Suma_Expuestos
+#   Severidad_{algo} = Total_Ulti_{algo}    / Cantidad_Ulti_{algo}
+#   LR_{algo}        = Freq_{algo}          / Severidad_{algo}
+
+coberturas = ["Robo", "DP", "PT", "RC", "TOTAL"]
+
+cols_grupo = ["MARCA_MODELO", "Suma_Expuestos"]
+
+exprs = []
+for cob in coberturas:
+    cant  = f"Cantidad_Ulti_{cob}"
+    total = f"Total_Ulti_{cob}"
+    exp   = "Suma_Expuestos"
+    prima = "Total_Prima_Deveng"
+
+    freq  = f"Freq_{cob}"
+    sev   = f"Severidad_{cob}"
+    lr    = f"LR_{cob}"
+
+    # Frecuencia
+    freq_expr = (
+        pl.when(pl.col(exp).is_not_null() & (pl.col(exp) > 0))
+        .then(100 * pl.col(cant).fill_null(0) / pl.col(exp))
+        .otherwise(None) # No hay exposición
+        .alias(freq)
+    )
+
+    # Severidad
+    sev_expr = (
+        pl.when(
+            pl.col(cant).is_not_null()
+            & (pl.col(cant) > 0)
+            & pl.col(total).is_not_null()
+        )
+        .then(pl.col(total) / pl.col(cant))
+        .otherwise(None)  # sin siniestros => severidad indefinida
+        .alias(sev)
+    )
+
+    # Loss Ratio
+    lr_expr = (
+        pl.when(pl.col(prima).is_not_null() & (pl.col(prima) > 0))
+        .then(100 * pl.col(total).fill_null(0) / pl.col(prima))
+        .otherwise(None)
+        .alias(lr)
+    )
+
+    exprs.extend([freq_expr, sev_expr, lr_expr])
+
+df_robos = (
+    df_norm
+    .select(cols_grupo + exprs)
+    .sort("Freq_Robo", descending=True)
+)
+
+
+# Hacer el join
+df_robos = df_robos.join(
+    df_bc.select(["MARCA_MODELO", "ESTADO SUSCRIPCION", "Promedio Tasa Frecuencia Robo (AACH)"]),
+    on="MARCA_MODELO",
+    how="left"
+)
+
+# Reordenar columnas: ESTADO SUSCRIPCION como segunda columna
+df_robos = df_robos.select(
+    [
+        pl.col("MARCA_MODELO"),        # 1ra columna
+        pl.col("ESTADO SUSCRIPCION"), # 2da columna
+        pl.col("Suma_Expuestos"), # 3ra columna
+        pl.col("Promedio Tasa Frecuencia Robo (AACH)"), # 4ta columna
+        pl.exclude(["MARCA_MODELO", "ESTADO SUSCRIPCION", "Suma_Expuestos", "Promedio Tasa Frecuencia Robo (AACH)"])
+    ]
+)
+
+# ── Mapa de orden para ESTADO SUSCRIPCION ───────────────────────────────────
+orden_estado = {
+    "BLOQUEADA": 0,
+    "MONITOREADA": 1,
+    "AACH": 2,
+}
+
+# Si df_robos es un DataFrame de Polars:
+df_robos_ordenado = (
+    df_robos
+    .with_columns(
+        pl.col("ESTADO SUSCRIPCION")
+        .replace(orden_estado)     # mapea BLOQUEADA/MONITOREADA/AACH a 0/1/2
+        .alias("orden_est")
+    )
+    .sort("orden_est")              # ordena por el orden deseado
+    .drop("orden_est")              # quita la columna auxiliar
+)
+
+paleta_robos = {
+    "MONITOREADA": "#FF9494",
+    "BLOQUEADA": "#94B6FF",
+    "AACH": "#FFDF94",
+}
+
+LR = ["LR_Robo", "LR_DP", "LR_PT", "LR_RC", "LR_TOTAL"]
+
+pretty_table(df_robos_ordenado,
+            n=100,
+            highlight_col="ESTADO SUSCRIPCION",
+            highlight_palette=paleta_robos,
+            highlight_cols=LR,
+            title="Tabla de marcas-modelo más robados (colores por estado suscripción actual)"
+            )
+```
+
+```{python}
+#| label: Dashboard-robos
+#| echo: true
+#| cache: true
+
+df_panda = df_robos.to_pandas()
+
+# ---- Generar gráfico interactivo ----
+fig_interactivo = boxhist_interactivo(
+    df_panda,
+    titulo="Características univariadas de la Tabla de más robados"
+)
+
+fig_interactivo.show()
+```
+
+```{python}
+#| label: dashboard-robos-desagregado
+#| echo: true
+#| cache: true
+
+# ---- Generar gráfico interactivo ----
+fig_interactivo_desagregado = boxhist_interactivo(
+    df_panda,
+    titulo="Características univariadas de la Tabla de más robados (desagregada por estado de suscripción)",
+    color_var="ESTADO SUSCRIPCION"
+)
+
+fig_interactivo_desagregado.show()
+```
+
+```{python}
+#| label: parquear-df_robos
+#| echo: true
+#| cache: true
+
+# Nombre del archivo parquet
+parquet_path_1 = DATA_DIR / "df_robos.parquet"
+
+# Guardar solo si el archivo NO existe
+if not path.exists(parquet_path_1):
+    df_robos.write_parquet(
+        parquet_path_1,
+        compression="snappy"  # puedes cambiar: "gzip", "zstd", "lz4", etc.
+    )
+    print(f"Archivo creado: {parquet_path_1}")
+else:
+    print(f"El archivo {parquet_path_1} ya existe, no se sobreescribe")
+```
+
+### Tabla de resultados sugeridos según criterios automáticos.
+
+Muestra la tabla de resultados sugeridos según análisis de métricas de siniestros **automatizada** para las marcas-modelo más robados. (`LR`, `Frec` y `Promedio Tasa Frecuencia Robo (AACH)` están en porcentaje).
+
+-   **Azul**: Bloquear.
+-   **Roja**: Monitorear.
+-   **Verde**: Sacar de la lista.
+
+::: {.callout-caution collapse="true"}
+## Criterios de selección automatizados
+
+Los criterios van en flujo **Bloquear \> Monitorear \> sacar**. Es decir, solo se saca si no se debe monitorear o bloquear y solo se monitorea si no se debe bloquear.
+
++-------------------+-------------------------------------------------------------------------------------+
+| Categoría         | Condición                                                                           |
++===================+=====================================================================================+
+| **Bloquear**      | Cumple **al menos uno**:                                                            |
++-------------------+-------------------------------------------------------------------------------------+
+|                   | \- Promedio Tasa Frecuencia Robo (AACH) **\>= 2,5**                                 |
++-------------------+-------------------------------------------------------------------------------------+
+|                   | \- **LR_TOTAL \>= 75**                                                              |
++-------------------+-------------------------------------------------------------------------------------+
+|                   | \- Categoría **Bloqueos estratégicos**                                              |
++-------------------+-------------------------------------------------------------------------------------+
+| **Monitorear**    | Cumple **al menos uno** (solo si NO cumple criterios de Bloquear):                  |
++-------------------+-------------------------------------------------------------------------------------+
+|                   | \- Promedio Tasa Frecuencia Robo (AACH) **\>= 1,5**                                 |
++-------------------+-------------------------------------------------------------------------------------+
+|                   | \- **65 \<= LR_TOTAL \< 75**                                                        |
++-------------------+-------------------------------------------------------------------------------------+
+| **Salir**         | Debe cumplir **ambos** (solo si NO cumple criterios anteriores):                    |
++-------------------+-------------------------------------------------------------------------------------+
+|                   | \- Promedio Tasa Frecuencia Robo (AACH) **\< 1,5**                                  |
++-------------------+-------------------------------------------------------------------------------------+
+|                   | \- **LR_TOTAL \< 65**                                                               |
++-------------------+-------------------------------------------------------------------------------------+
+| **Facilitadores** | Aplican holguras a los criterios (con holguras `LR_TOTAL` NO acumulables entre sí): |
++-------------------+-------------------------------------------------------------------------------------+
+|                   | \- Si **LR_ROBO \< LR_DP** → Holgura **+5 en LR_TOTAL** y **+0,3 en AACH**          |
++-------------------+-------------------------------------------------------------------------------------+
+|                   | \- Si **ESTADO SUSCRIPCION = BLOQUEADA** → Holgura **+5 en LR_TOTAL**               |
++-------------------+-------------------------------------------------------------------------------------+
+|                   | \- Si **AACH = NA** → Holgura **+5 en LR_TOTAL**                                    |
++-------------------+-------------------------------------------------------------------------------------+
+| **Advertencias**  | \- Daño parcial tiene menor siniestralidad que Robo: **LR_ROBO \> LR_DP**           |
++-------------------+-------------------------------------------------------------------------------------+
+|                   | \- Si son bloqueos estratégicos                                                     |
++-------------------+-------------------------------------------------------------------------------------+
+:::
+
+```{python}
+#| label: propuesta-selecciones-automáticas
+#| echo: true
+#| cache: true
+
+# import polars as pl
+
+# ── Categorización automática: criterio actuarial senior ───────────────────
+# Orden de prioridad: BLOQUEAR > MONITOREAR > SALIR
+#   BLOQUEAR  : AACH >= 2.5  ó  LR_TOTAL >= 75
+#   MONITOREAR: AACH >= 1.5  ó  65 <= LR_TOTAL < 75
+#   SALIR     : LR_TOTAL < 65 (resto)
+# Advertencia : LR_Robo >= LR_DP (siniestralidad robo supera daño parcial)
+
+col_aach = "Promedio Tasa Frecuencia Robo (AACH)"
+
+# ── Penalizadores / aumentos de tolerancia ─────────────────────────────────
+df_robos = df_robos.with_columns(
+    # 1) LR_Robo < LR_DP → +5 en LR_TOTAL y +0.3 en AACH
+    penal_lr_robo_lt_dp = (
+        pl.when(
+            pl.col("LR_Robo").is_not_null()
+            & pl.col("LR_DP").is_not_null()
+            & (pl.col("LR_Robo") < pl.col("LR_DP"))
+        )
+        .then(1)
+        .otherwise(0)
+    ),
+
+    # 2) ESTADO SUSCRIPCION == "BLOQUEADA" → +5 en LR_TOTAL
+    penal_estado_bloqueada = (
+        pl.when(pl.col("ESTADO SUSCRIPCION") == "BLOQUEADA")
+        .then(1)
+        .otherwise(0)
+    ),
+
+    # 3) AACH es NULL → +5 en LR_TOTAL
+    penal_aach_na = (
+        pl.when(pl.col(col_aach).is_null())
+        .then(1)
+        .otherwise(0)
+    ),
+).with_columns(
+    # Delta total en LR_TOTAL (en puntos de LR)
+    DELTA_LR = pl.when(
+        (pl.col("penal_lr_robo_lt_dp") == 1)
+        | (pl.col("penal_estado_bloqueada") == 1)
+        | (pl.col("penal_aach_na") == 1)
+    )
+    .then(5)
+    .otherwise(0),
+
+    # Delta en AACH solo si LR_Robo < LR_DP (se mantiene igual)
+    DELTA_AACH = 0.3 * pl.col("penal_lr_robo_lt_dp"),
+)
+
+# ── Categorización automática con umbrales ajustados ───────────────────────
+df_robos = df_robos.with_columns(
+    pl.when(
+        # BLOQUEAR:
+        # AACH >= (2.5 + DELTA_AACH)  ó  LR_TOTAL >= (75 + DELTA_LR)
+        (pl.col(col_aach).is_not_null() &
+         (pl.col(col_aach) >= (2.5 + pl.col("DELTA_AACH"))))
+        | (
+            pl.col("LR_TOTAL").is_not_null()
+            & (pl.col("LR_TOTAL") >= (75 + pl.col("DELTA_LR")))
+        )
+    )
+    .then(pl.lit("BLOQUEAR"))
+    .when(
+        # MONITOREAR:
+        # AACH >= (1.5 + DELTA_AACH)
+        #   ó  (65 + DELTA_LR) <= LR_TOTAL < (75 + DELTA_LR)
+        (pl.col(col_aach).is_not_null() &
+         (pl.col(col_aach) >= (1.5 + pl.col("DELTA_AACH"))))
+        | (
+            pl.col("LR_TOTAL").is_not_null()
+            & (pl.col("LR_TOTAL") >= (65 + pl.col("DELTA_LR")))
+            & (pl.col("LR_TOTAL") <  (75 + pl.col("DELTA_LR")))
+        )
+    )
+    .then(pl.lit("MONITOREAR"))
+    .otherwise(pl.lit("SALIR"))
+    .alias("PROPUESTA"),
+
+    # Flag de advertencia: siniestralidad robo > daño parcial
+    pl.when(
+        pl.col("LR_Robo").is_not_null()
+        & pl.col("LR_DP").is_not_null()
+        & (pl.col("LR_Robo") > pl.col("LR_DP"))
+    )
+    .then(pl.lit("⚠️ Robo > DP"))
+    .otherwise(pl.lit(""))
+    .alias("ADVERTENCIA"),
+)
+
+# ── Generar lista de modelos estratégicos desde df_bc ───────────────────────
+modelos_bloqueados = (
+    df_bc
+    .filter(pl.col("Indicacion de Bloqueo").is_not_null())
+    .select("MARCA_MODELO")
+    .to_series()
+    .to_list()
+)
+
+modelos_monitoreados = (
+    df_bc
+    .filter(pl.col("Indicacion de Monitoreo").is_not_null())
+    .select("MARCA_MODELO")
+    .to_series()
+    .to_list()
+)
+
+modelos_salida = (
+    df_bc
+    .filter(pl.col("Indicacion de Salida").is_not_null())
+    .select("MARCA_MODELO")
+    .to_series()
+    .to_list()
+)
+
+# ── Modificadores estratégicos (override manual) ────────────────────────────
+df_robos = df_robos.with_columns(
+    # Actualizar PROPUESTA según modificador estratégico
+    pl.when(pl.col("MARCA_MODELO").is_in(modelos_bloqueados))
+      .then(pl.lit("BLOQUEAR"))
+      .when(pl.col("MARCA_MODELO").is_in(modelos_monitoreados))
+      .then(pl.lit("MONITOREAR"))
+      .when(pl.col("MARCA_MODELO").is_in(modelos_salida))
+      .then(pl.lit("SALIR"))
+      .otherwise(pl.col("PROPUESTA"))
+      .alias("PROPUESTA"),
+
+    # Actualizar ADVERTENCIA concatenando sin pisar la existente
+    pl.when(
+        pl.col("MARCA_MODELO").is_in(modelos_bloqueados)
+        & (pl.col("ADVERTENCIA") != "")
+    )
+      .then(pl.col("ADVERTENCIA") + " | ⚠️ Indicación de bloqueo")
+    .when(pl.col("MARCA_MODELO").is_in(modelos_bloqueados))
+      .then(pl.lit("⚠️ Indicación de bloqueo"))
+
+    .when(
+        pl.col("MARCA_MODELO").is_in(modelos_monitoreados)
+        & (pl.col("ADVERTENCIA") != "")
+    )
+      .then(pl.col("ADVERTENCIA") + " | ⚠️ Monitoría estratégica")
+    .when(pl.col("MARCA_MODELO").is_in(modelos_monitoreados))
+      .then(pl.lit("⚠️ Monitoría estratégica"))
+
+    .when(
+        pl.col("MARCA_MODELO").is_in(modelos_salida)
+        & (pl.col("ADVERTENCIA") != "")
+    )
+      .then(pl.col("ADVERTENCIA") + " | ⚠️ Salida estratégica")
+    .when(pl.col("MARCA_MODELO").is_in(modelos_salida))
+      .then(pl.lit("⚠️ Salida estratégica"))
+
+    .otherwise(pl.col("ADVERTENCIA"))
+    .alias("ADVERTENCIA"),
+)
+
+# ── Reordenar columnas ──────────────────────────────────────────────────────
+cols_inicio = ["MARCA_MODELO", "ESTADO SUSCRIPCION", "PROPUESTA", "ADVERTENCIA"]
+cols_resto  = [c for c in df_robos.columns if c not in cols_inicio]
+
+cols_drop = [
+    "penal_lr_robo_lt_dp",
+    "penal_estado_bloqueada",
+    "penal_aach_na",
+    "DELTA_LR",
+    "DELTA_AACH",
+]
+
+df_robos = df_robos.select(cols_inicio + cols_resto)
+df_robos = df_robos.drop(cols_drop)
+
+
+# ── Mapa de orden para PROPUESTA ───────────────────────────────────
+orden_propuesta = {
+    "BLOQUEAR": 0,
+    "MONITOREAR": 1,
+    "SALIR": 2,
+}
+
+# Si df_robos es un DataFrame de Polars:
+df_robos_sug = (
+    df_robos
+    .with_columns(
+        pl.col("PROPUESTA")
+        .replace(orden_propuesta)     # mapea BLOQUEAR/MONITOREAR/SALIR a 0/1/2
+        .alias("orden_prop")
+    )
+    .sort("orden_prop")              # ordena por el orden deseado
+    .drop("orden_prop")              # quita la columna auxiliar
+)
+
+
+# ── Paleta semántica para la propuesta ──────────────────────────────────────
+paleta_propuesta = {
+    "BLOQUEAR":   "#94b6ffbe",   # Rojo suave
+    "MONITOREAR": "#ff9494cc",   # Amarillo/naranja suave
+    "SALIR":      "#94dfadd3",   # Verde suave
+}
+
+LR = ["LR_Robo", "LR_DP", "LR_PT", "LR_RC", "LR_TOTAL"]
+
+pretty_table(
+    df_robos_sug,
+    n=100,
+    highlight_col="PROPUESTA",
+    highlight_palette=paleta_propuesta,
+    highlight_cols=LR,
+    title="Propuesta automatizada de selección (coloreado por estado propuesto)",
+)
+```
+
+```{python}
+#| label: dashboard-sugerencias-desagregado
+#| echo: true
+#| cache: true
+
+df_panda_sug = df_robos.to_pandas()
+
+# ---- Generar gráfico interactivo ----
+fig_interactivo_desagregado_sugerencias = boxhist_interactivo(
+    df_panda_sug,
+    titulo="Características univariadas de la Tabla de sugerencias automáticas (desagregada por sugerencia)",
+    color_var="PROPUESTA"
+)
+
+fig_interactivo_desagregado_sugerencias.show()
+```
+
+```{python}
+#| label: parquear-df_sugerencias
+#| echo: true
+#| cache: true
+
+# Nombre del archivo parquet
+parquet_path_2 = DATA_DIR / "df_sugerencias.parquet"
+
+# Guardar solo si el archivo NO existe
+if not path.exists(parquet_path_2):
+    df_robos.write_parquet(
+        parquet_path_2,
+        compression="snappy"  # puedes cambiar: "gzip", "zstd", "lz4", etc.
+    )
+    print(f"Archivo creado: {parquet_path_2}")
+else:
+    print(f"El archivo {parquet_path_2} ya existe, no se sobreescribe")
+```
+
+### Cambios sugeridos
+
+Resumen de propuesta de cambios a realizarse según el análisis automatizado.
+
+```{python}
+#| label: propuesta-cambios
+#| echo: true
+#| cache: true
+
+# import polars as pl
+# from typing import List, Dict, Any, Tuple
+
+
+def calcular_criterios_y_holguras(row: Dict[str, Any]) -> dict:
+    """
+    Devuelve un diccionario con:
+      - categoria: str  ("Bloquear" | "Monitorear" | "Salir" | "Revisión manual")
+      - criterios_text: str
+      - holguras_text:  str
+      - alertas_text:   str
+      - interpretacion: str  (explicación en lenguaje natural)
+      - lr_total_raw: float|None   (valor bruto LR_TOTAL, sin ajustar)
+      - aach_raw:     float|None   (valor bruto AACH, sin ajustar)
+      - delta_lr: int              (holgura aplicada a umbrales LR)
+      - delta_aach: float          (holgura aplicada a umbrales AACH)
+      - tiene_alertas: bool
+      - tiene_holguras: bool
+    """
+
+    # === Lectura de columnas base (valores reales, NO se modifican) ===
+    aach = row.get("Promedio Tasa Frecuencia Robo (AACH)", None)
+    lr_total = row.get("LR_TOTAL", None)
+    lr_robo = row.get("LR_Robo", None)
+    lr_dp = row.get("LR_DP", None)
+    estado = row.get("ESTADO SUSCRIPCION", None)
+    advertencia = row.get("ADVERTENCIA", "")
+
+    # Extraer flags de ADVERTENCIA
+    es_bloqueo_estrategico = "⚠️ Indicación de bloqueo" in advertencia if advertencia else False
+    es_monitoria_estrategica = "⚠️ Monitoría estratégica" in advertencia if advertencia else False
+    es_salida_estrategica = "⚠️ Salida estratégica" in advertencia if advertencia else False
+
+    # ---- Facilitadores / holguras (ajustan UMBRALES, no valores) ----
+    holguras_triggers: list[str] = []
+    lr_plus_5 = False
+    aach_plus_0_3 = False
+
+    # 1) LR_ROBO < LR_DP → +5 en umbrales LR y +0,3 en umbrales AACH
+    if lr_robo is not None and lr_dp is not None and lr_robo < lr_dp:
+        holguras_triggers.append("LR_ROBO<LR_DP")
+        lr_plus_5 = True
+        aach_plus_0_3 = True
+
+    # 2) ESTADO SUSCRIPCION = BLOQUEADA → +5 en umbrales LR
+    if estado == "BLOQUEADA":
+        holguras_triggers.append("BLOQUEADA")
+        lr_plus_5 = True
+
+    # 3) AACH = NA → +5 en umbrales LR
+    if aach is None:
+        holguras_triggers.append("AACH=NA")
+        lr_plus_5 = True
+
+    # Calcular deltas de umbrales (LR no acumulable)
+    delta_lr = 5 if lr_plus_5 else 0
+    delta_aach = 0.3 if aach_plus_0_3 else 0.0
+
+    # Umbrales ajustados (los criterios se vuelven más permisivos)
+    U_BLOQUEAR_LR  = 75 + delta_lr    # base 75
+    U_BLOQUEAR_AACH = 2.5 + delta_aach  # base 2.5
+    U_MONITOREAR_LR_INF = 65 + delta_lr  # base 65
+    U_MONITOREAR_LR_SUP = 75 + delta_lr  # base 75
+    U_MONITOREAR_AACH = 1.5 + delta_aach  # base 1.5
+    U_SALIR_LR = 65 + delta_lr           # base 65
+    U_SALIR_AACH = 1.5 + delta_aach      # base 1.5
+
+    # Helper formato
+    def fmt(x, ndigits: int = 1) -> str:
+        if isinstance(x, (int, float)):
+            return f"{x:.{ndigits}f}"
+        return "NA"
+
+    def fmt_umbral(base, delta, ndigits=1):
+        """Muestra umbral con holgura si aplica: '80 (75+5)' o solo '75'."""
+        if delta:
+            return f"{base + delta:.{ndigits}f} ({base:.{ndigits}f}+{delta:g})"
+        return f"{base:.{ndigits}f}"
+
+    criterios: list[str] = []
+    categoria_aplicada = None
+    interpretacion_partes: list[str] = []
+
+    # ---- BLOQUEAR ----
+    cumple_bloquear = False
+
+    if aach is not None and aach >= U_BLOQUEAR_AACH:
+        cumple_bloquear = True
+        criterios.append(f"AACH {fmt(aach, 2)} ≥ {fmt_umbral(2.5, delta_aach, 1)}")
+        interpretacion_partes.append(
+            f"la tasa AACH ({fmt(aach, 2)}%) supera el umbral {'ajustado ' if delta_aach else ''}de {U_BLOQUEAR_AACH:g}%"
+        )
+
+    if lr_total is not None and lr_total >= U_BLOQUEAR_LR:
+        cumple_bloquear = True
+        criterios.append(f"LR {fmt(lr_total)} ≥ {fmt_umbral(75, delta_lr)}")
+        interpretacion_partes.append(
+            f"la siniestralidad total (LR {fmt(lr_total)}%) excede el umbral {'ajustado ' if delta_lr else ''}de {U_BLOQUEAR_LR:g}%"
+        )
+
+    if es_bloqueo_estrategico:
+        cumple_bloquear = True
+        criterios.append("Indicación de bloqueo")
+        interpretacion_partes.append("Es un bloqueo por indicación")
+
+    if cumple_bloquear:
+        categoria_aplicada = "Bloquear"
+
+    # ---- MONITOREAR (solo si no Bloquear) ----
+    if categoria_aplicada is None:
+        cumple_monitorear = False
+
+        if aach is not None and aach >= U_MONITOREAR_AACH:
+            cumple_monitorear = True
+            criterios.append(f"AACH {fmt(aach, 2)} ≥ {fmt_umbral(1.5, delta_aach, 1)}")
+            interpretacion_partes.append(
+                f"la tasa AACH ({fmt(aach, 2)}%) está en zona de monitoreo (≥ {U_MONITOREAR_AACH:g}%)"
+            )
+
+        if lr_total is not None and U_MONITOREAR_LR_INF <= lr_total < U_MONITOREAR_LR_SUP:
+            cumple_monitorear = True
+            criterios.append(f"{fmt_umbral(65, delta_lr)} ≤ LR {fmt(lr_total)} < {fmt_umbral(75, delta_lr)}")
+            interpretacion_partes.append(
+                f"la siniestralidad (LR {fmt(lr_total)}%) está en rango de vigilancia ({U_MONITOREAR_LR_INF:g}%-{U_MONITOREAR_LR_SUP:g}%)"
+            )
+
+        if es_monitoria_estrategica:
+            cumple_monitorear = True
+            criterios.append("Monitoría estratégica")
+            interpretacion_partes.append("es una monitoría estratégica definida por la compañía")
+
+        if cumple_monitorear:
+            categoria_aplicada = "Monitorear"
+
+    # ---- SALIR (solo si no cumple anteriores) ----
+    if categoria_aplicada is None:
+        cumple_aach_bajo = (aach is None) or (aach < U_SALIR_AACH)
+        cumple_lr_bajo = (lr_total is not None and lr_total < U_SALIR_LR)
+
+        if cumple_aach_bajo and cumple_lr_bajo:
+            categoria_aplicada = "Salir"
+            if aach is None:
+                criterios.append(f"AACH NA → < {U_SALIR_AACH:g}")
+                interpretacion_partes.append("no registra tasa AACH")
+            else:
+                criterios.append(f"AACH {fmt(aach, 2)} < {fmt_umbral(1.5, delta_aach, 1)}")
+                interpretacion_partes.append(
+                    f"la tasa AACH ({fmt(aach, 2)}%) está por debajo del umbral de {U_SALIR_AACH:g}%"
+                )
+            criterios.append(f"LR {fmt(lr_total)} < {fmt_umbral(65, delta_lr)}")
+            interpretacion_partes.append(
+                f"la siniestralidad (LR {fmt(lr_total)}%) es inferior al {U_SALIR_LR:g}%"
+            )
+
+        if es_salida_estrategica:
+            categoria_aplicada = "Salir"
+            criterios.append("Salida estratégica")
+            interpretacion_partes.append("es una salida estratégica definida por la compañía")
+
+    if categoria_aplicada is None:
+        categoria_aplicada = "Revisión manual"
+        if not criterios:
+            criterios.append("Revisión manual")
+        interpretacion_partes.append("no cumple ningún criterio automático y requiere revisión")
+
+    # ---- Holguras ----
+    if not holguras_triggers:
+        holguras_text = "ninguna"
+    else:
+        efectos: list[str] = []
+        if lr_plus_5:
+            efectos.append("LR+5")
+        if aach_plus_0_3:
+            efectos.append("AACH+0,3")
+        if efectos:
+            holguras_text = f"{', '.join(holguras_triggers)} | ({'; '.join(efectos)})"
+        else:
+            holguras_text = ", ".join(holguras_triggers)
+
+    # ---- Alertas ----
+    alertas: list[str] = []
+    if lr_robo is not None and lr_dp is not None and lr_robo > lr_dp:
+        alertas.append("LR_ROBO > LR_DP")
+        interpretacion_partes.append(
+            f"la siniestralidad por robo ({fmt(lr_robo)}%) supera la de daño parcial ({fmt(lr_dp)}%)"
+        )
+    if es_bloqueo_estrategico:
+        alertas.append("Indicación de bloqueo")
+    if es_monitoria_estrategica:
+        alertas.append("Monitoría estratégica")
+    if es_salida_estrategica:
+        alertas.append("Salida estratégica")
+
+    alertas_text = ", ".join(alertas) if alertas else "ninguna"
+    criterios_text = "; ".join(criterios) if criterios else "Revisión manual"
+
+    # ---- Interpretación natural ----
+    if len(interpretacion_partes) == 1:
+        interpretacion = interpretacion_partes[0].capitalize() + "."
+    elif len(interpretacion_partes) >= 2:
+        interpretacion = (
+            ", ".join(interpretacion_partes[:-1]).capitalize()
+            + " y " + interpretacion_partes[-1] + "."
+        )
+    else:
+        interpretacion = "Sin interpretación disponible."
+
+    return {
+        "categoria": categoria_aplicada,
+        "criterios_text": criterios_text,
+        "holguras_text": holguras_text,
+        "alertas_text": alertas_text,
+        "interpretacion": interpretacion,
+        "lr_total_raw": lr_total,
+        "aach_raw": aach,
+        "delta_lr": delta_lr,
+        "delta_aach": delta_aach,
+        "tiene_alertas": len(alertas) > 0,
+        "tiene_holguras": len(holguras_triggers) > 0,
+    }
+
+
+HTML_SALIDA = PROJECT_ROOT / "Salidas" / "Tablas_de_interpretaciones"
+
+fecha_str = datetime.now().strftime("%Y%m%d")
+nombre_archivo = f"Tabla_interpretaciones_{fecha_str}.html"
+
+
+def generar_html_interpretaciones(df_robos: pl.DataFrame, nombre_archivo: str = nombre_archivo) -> str:
+    """
+    Genera un archivo HTML estilizado con identidad SURA que muestra los
+    cambios sugeridos agrupados por Bloquear / Monitorear / Salir.
+    Solo incluye filas donde el grupo actual difiere del propuesto.
+    Incluye métricas clave, interpretación en lenguaje natural, y transición de estado.
+    Retorna la ruta del archivo generado.
+    """
+    import html as html_mod
+
+    # ── Mapa de estados ────────────────────────────────────────────────────
+    mapa_estado_a_grupo = {
+        "BLOQUEADA": "BLOQUEADOS", "MONITOREADA": "MONITOREADOS", "AACH": "NINGUNO",
+    }
+    mapa_propuesta_a_grupo = {
+        "BLOQUEAR": "BLOQUEADOS", "MONITOREAR": "MONITOREADOS", "SALIR": "NINGUNO",
+    }
+    etiqueta_estado = {
+        "BLOQUEADA": "Bloqueada", "MONITOREADA": "Monitoreada", "AACH": "Solo AACH",
+    }
+
+    # Tipo: (marca, modelo, estado_anterior, info_dict)
+    categorias: dict[str, list[tuple[str, str, str, dict]]] = {
+        "Bloquear": [], "Monitorear": [], "Salir": [], "Mantener": []
+    }
+    n_con_alertas = 0
+    n_con_holguras = 0
+
+    for row in df_robos.iter_rows(named=True):
+        marca_modelo = row["MARCA_MODELO"]
+        estado = row["ESTADO SUSCRIPCION"]
+        propuesta = row["PROPUESTA"]
+
+        ga = mapa_estado_a_grupo.get(estado, "NINGUNO")
+        gp = mapa_propuesta_a_grupo.get(propuesta, "NINGUNO")
+
+        info = calcular_criterios_y_holguras(row)
+
+        if ga == gp:
+            cat = "Mantener"
+            info["categoria"] = "Mantener"
+            # Actualizamos la interpretación para Mantener
+            info["interpretacion"] = f"Mantiene el estado actual ({etiqueta_estado.get(estado, estado or 'Sin estado')}): {info['interpretacion']}"
+        else:
+            cat = {"BLOQUEAR": "Bloquear", "MONITOREAR": "Monitorear", "SALIR": "Salir"}.get(propuesta)
+
+        if info["tiene_alertas"]:
+            n_con_alertas += 1
+        if info["tiene_holguras"]:
+            n_con_holguras += 1
+
+        if " - " in marca_modelo:
+            marca, modelo = marca_modelo.split(" - ", 1)
+        else:
+            marca, modelo = marca_modelo, ""
+
+        estado_label = etiqueta_estado.get(estado, estado or "—")
+        if cat:
+            categorias[cat].append((marca.strip(), modelo.strip(), estado_label, info))
+
+    # Helper formato
+    def _fmt(x, nd=1):
+        if isinstance(x, (int, float)):
+            return f"{x:.{nd}f}%"
+        return "N/A"
+
+    # ── Generador de tarjetas ──────────────────────────────────────────────
+    def _vehiculo_html(marca, modelo, estado_ant, info, cat_css):
+        m_esc = html_mod.escape(marca)
+        d_esc = html_mod.escape(modelo)
+        chevron = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>'
+
+        holguras_html = html_mod.escape(info["holguras_text"])
+        if "BLOQUEADA" in info["holguras_text"]:
+            holguras_html = holguras_html.replace("BLOQUEADA", '<span class="badge-bloqueada">BLOQUEADA</span>')
+
+        # Badge de transición
+        cat_label = info["categoria"]
+        trans = f'{html_mod.escape(estado_ant)} → {html_mod.escape(cat_label)}'
+
+        # Métricas pills (valores reales, sin ajustar)
+        lr_pill = _fmt(info["lr_total_raw"])
+        aach_pill = _fmt(info["aach_raw"], 2)
+        lr_holgura_note = ""
+        aach_holgura_note = ""
+        if info["tiene_holguras"]:
+            if info["delta_lr"]:
+                lr_holgura_note = f' <span class="metric-adj">(umbral +{info["delta_lr"]})</span>'
+            if info["delta_aach"]:
+                aach_holgura_note = f' <span class="metric-adj">(umbral +{info["delta_aach"]:g})</span>'
+
+        # Alertas badge
+        alerta_ico = ""
+        if info["tiene_alertas"]:
+            alerta_ico = '<span class="alert-dot" title="Tiene alertas"></span>'
+
+        return f'''      <li class="vehiculo">
+        <div class="vehiculo-header">
+          <div class="vehiculo-nombre">
+            {alerta_ico}<span class="marca">{m_esc}</span><span class="sep">—</span><span class="modelo">{d_esc}</span>
+          </div>
+          <button class="info-btn" type="button" aria-label="Ver detalle">{chevron}</button>
+        </div>
+        <div class="vehiculo-detalle">
+          <div class="transition-badge transition-{cat_css}">{trans}</div>
+          <div class="metric-row">
+            <span class="metric-pill pill-lr">LR {lr_pill}{lr_holgura_note}</span>
+            <span class="metric-pill pill-aach">AACH {aach_pill}{aach_holgura_note}</span>
+          </div>
+          <p class="interpretacion">{html_mod.escape(info["interpretacion"])}</p>
+          <ul>
+            <li><span class="detalle-label">Criterios:</span> {html_mod.escape(info["criterios_text"])}</li>
+            <li><span class="detalle-label">Holguras:</span> {holguras_html}</li>
+            <li><span class="detalle-label">Alertas:</span> {html_mod.escape(info["alertas_text"])}</li>
+          </ul>
+        </div>
+      </li>'''
+
+    # ── Generador de columna ───────────────────────────────────────────────
+    css_class_map = {"Bloquear": "bloquear", "Monitorear": "monitorear", "Salir": "salir", "Mantener": "mantener"}
+
+    def _columna_html(titulo, items):
+        n = len(items)
+        lbl = f"{n} {'vehículo' if n == 1 else 'vehículos'}"
+        cards = "\n".join(_vehiculo_html(*it, css_class_map[titulo]) for it in items)
+        return f'''  <div class="columna">
+    <div class="titulo-bloque {css_class_map[titulo]}">
+      <span>{titulo}</span>
+      <span class="count-badge">{lbl}</span>
+    </div>
+    <ul class="lista-vehiculos">
+{cards}
+    </ul>
+  </div>'''
+
+    total = sum(len(v) for v in categorias.values())
+    columnas_html = "\n\n".join(_columna_html(t, items) for t, items in categorias.items())
+
+    # ── Resumen estadístico ────────────────────────────────────────────────
+    n_bloq = len(categorias["Bloquear"])
+    n_mon = len(categorias["Monitorear"])
+    n_sal = len(categorias["Salir"])
+    n_man = len(categorias.get("Mantener", []))
+    total_cambios = total - n_man
+
+    resumen_html = f'''<div class="resumen-panel">
+  <div class="resumen-stat">
+    <div class="resumen-num">{total}</div>
+    <div class="resumen-label">Total Interpretados</div>
+  </div>
+  <div class="resumen-stat">
+    <div class="resumen-num color-bloquear">{n_bloq}</div>
+    <div class="resumen-label">Bloquear</div>
+  </div>
+  <div class="resumen-stat">
+    <div class="resumen-num color-monitorear">{n_mon}</div>
+    <div class="resumen-label">Monitorear</div>
+  </div>
+  <div class="resumen-stat">
+    <div class="resumen-num color-salir">{n_sal}</div>
+    <div class="resumen-label">Salir</div>
+  </div>
+  <div class="resumen-stat">
+    <div class="resumen-num color-mantener">{n_man}</div>
+    <div class="resumen-label">Mantener</div>
+  </div>
+  <div class="resumen-stat">
+    <div class="resumen-num color-alerta">{n_con_alertas}</div>
+    <div class="resumen-label">Con alertas</div>
+  </div>
+  <div class="resumen-stat">
+    <div class="resumen-num color-holgura">{n_con_holguras}</div>
+    <div class="resumen-label">Con holguras</div>
+  </div>
+</div>'''
+
+    # ── Logo SVG SURA ──────────────────────────────────────────────────────
+    logo_svg = '<svg xmlns="http://www.w3.org/2000/svg" width="110" height="38" fill="none"><clipPath id="a"><path d="M0 0h109.501v38H0z"/></clipPath><g fill="#fff" clip-path="url(#a)"><path d="M94.745 30.868c.038-.074.008-.12-.04-.13-2.101.836-6.701 1.673-9.565 2.1-2.476.373-4.6.432-5.786.514l-.539.045c-.063.01-.1.048-.108.1-.015.045.019.078.056.104.216.242.915.893 2.31 1.097 1.598.22 3.978-.197 6.942-1.052 2.488-.71 5.336-1.941 6.727-2.778zM94.961 32.114c-1.331.91-3.138 1.788-5.302 2.54a43 43 0 0 1-7.125 1.833c-.049.014-.09.048-.1.096 0 .034.01.071.033.09.424.334.97.531 1.64.606.829.093 1.826-.019 2.97-.32 1.02-.272 1.994-.722 3.102-1.253 1.052-.51 2.053-1.101 2.904-1.71.87-.622 1.529-1.232 1.938-1.763.003-.075-.019-.108-.06-.116zM84.162 8.582c.532.573 1.224.982 2.064 1.246l.063.022c.234.064 14.242 3.753 17.953 4.753 1.622.435 2.908.784 3.511.96.063.003.096-.023.104-.06 0-.03-.019-.06-.052-.075-2.343-.94-16.778-6.477-22.219-8.56l-2.29-.885c-.078-.007-.116-.004-.145.026-.023.026-.026.067-.026.09.018.193.137 1.234.602 1.948.134.208.28.383.435.543zM84.768 3.072c.28.345.547.568 1.06.877.171.104.342.216.54.309l1.29.654c.732.372 11.553 5.41 13.134 6.195 1.87.919 3.737 1.8 4.555 2.213.082.015.123-.008.1-.104-2.015-1.257-9.757-6.128-15.283-9.542L86.2 1.279l-.725-.446-1.346-.814c-.075-.026-.108-.023-.134 0a.08.08 0 0 0-.056.078c-.015.186-.03 1.2.283 1.978.145.342.323.703.546.997M94.515 34.538c-.019 0-.048 0-.067.015-1.792 1.763-4.436 2.755-5.314 3.027a.11.11 0 0 0-.093.093c0 .044.03.093.07.111.138.067 1.202.64 3.217-.379 1.15-.58 1.73-1.513 2.246-2.755.02-.075-.026-.104-.063-.104zM107.403 19.705c-.9.256-4.336 1.141-7.366 1.911-2.625.677-5.567 1.48-5.567 1.48-.308.078-.197.205-.163.25.078.122.249.39.442.717.472.788 1.112.688 1.685.487.107-.037 10.568-4.4 11.04-4.715.082-.045.03-.082.026-.108-.011-.03-.067-.022-.093-.022zM102.807 26.96l-.067.026c-1.383 1.149-3.488 2.99-5.67 4.845-.209.167-.287.476-.372.848-.138.62-.458 1.431-.458 1.431-.063.186.026.26.201.082 1.68-1.81 5.407-5.93 6.415-7.106.022-.078-.008-.119-.052-.123zM109.434 16.916c-1.86-.342-24.465-4.35-24.48-4.35a.17.17 0 0 0-.122.051.24.24 0 0 0 .003.134c.368 1.168 1.25 2.339 2.774 2.811.175.056.324.07.495.09 0 0 19.169 1.256 21.304 1.405.052 0 .089-.022.089-.06s-.026-.07-.067-.077zM108.493 18.206c-.673.019-2.057.026-3.782.033-1.989.008-4.451.02-6.742.023-3.082.011-7.976.04-7.976.04-.03.005-.07.02-.093.057s-.022.066 0 .1c.063.208.35.729.658 1.056.617.64 1.283.974 1.978 1.045q.122.009.25.007c.085 0 .163-.01.26-.026.093-.01 14.662-2.063 15.451-2.19a.09.09 0 0 0 .07-.063c0-.037-.033-.078-.074-.082M106.232 21.742a892 892 0 0 1-5.846 3.56c-1.249.758-2.83 1.639-3.644 2.148-.096.06-.17.056-.126.31 0 0 .037.24.063.53.085 1.213.58 1.08 1.309.518l.085-.071c2.518-2.071 7.192-6.005 8.211-6.86.026-.09 0-.12-.048-.135zM64.071 8.62c-5.009.007-9.72 3.696-9.925 10.884-.182 6.537 3.22 11.11 8.98 11.11 4.734 0 6.396-3.298 6.396-3.298.268 2.21 1.465 2.882 3.842 2.882V8.62zm5.225 12.713c0 2.986-1.711 5.831-5.433 5.831-3.325 0-5.708-2.235-5.556-7.616.149-5.16 2.637-7.433 5.916-7.433q.384 0 .733-.03l4.34.004zM32.154 8.62l.015 14.963c0 2.183-1.803 3.28-4.187 3.28-2.51 0-4.15-1.093-4.15-3.28l-.03-11.196c-.003-3.191-2-3.767-3.759-3.767v15.882c0 4.012 3.607 5.979 7.816 5.979s8.084-1.967 8.084-5.98V12.878c0-3.138-1.182-4.254-3.789-4.254zM11.115 18.284 6.507 17.02c-1.268-.35-2.424-.9-2.424-2.447s.974-2.402 3.023-2.402h4.098c1.811 0 3.972-.603 3.975-3.551l-7.712.007C2.718 8.63 0 11.029 0 14.469c0 3.198 2.03 4.998 5.656 5.96l4.009 1.064c1.658.446 2.25 1.484 2.25 2.547 0 1.622-1.023 2.6-3.511 2.614l-7.697.06v3.484h7.827c4.749 0 7.47-2.55 7.47-5.905 0-3.354-1.33-5.042-4.885-6.009zM48.903 8.62c-4.667 0-7.883 2.696-7.883 8.251v13.324h3.759v-13.45c0-2.86 1.543-4.574 4.447-4.574h1.116c3.298 0 3.834-1.707 3.834-3.551h-5.277z"/></g></svg>'
+
+    # ── Documento HTML completo ────────────────────────────────────────────
+    html_doc = f'''<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Estado de Vehículos — SURA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{{
+  --sura-blue-dark:#003057;--sura-blue:#0033A0;--sura-blue-mid:#0055A0;
+  --sura-blue-light:#0071CE;--sura-aqua:#00AEC7;--sura-aqua-light:#4EC3E0;
+  --sura-yellow:#E3E829;--sura-yellow-mid:#FFE946;
+  --sura-gray-dark:#253746;--sura-gray:#53565A;--sura-gray-light:#C7C9C7;
+  --surface:#f3f6fa;--surface-card:#ffffff;--border:#dde4ed;
+  --text-primary:#1a2b3f;--text-secondary:#4a5f7a;--text-muted:#7a8fa8;
+  --color-bloquear:#5b8def;--color-monitorear:#e06060;--color-salir:#4dae6f;--color-mantener:#7a8fa8;
+  --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --radius-sm:6px;--radius-md:10px;--radius-lg:16px;
+  --shadow-card:0 2px 12px rgba(0,48,87,.07);--shadow-hover:0 8px 28px rgba(0,48,87,.13);
+  --transition:.22s cubic-bezier(.4,0,.2,1);
+}}
+*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:var(--font);background:var(--surface);color:var(--text-primary);line-height:1.6;min-height:100vh}}
+
+/* Header */
+.header{{background:linear-gradient(135deg,var(--sura-blue-dark) 0%,var(--sura-blue) 50%,var(--sura-blue-mid) 100%);color:#fff;padding:28px 32px 24px;display:flex;align-items:center;justify-content:space-between;gap:20px;position:relative;overflow:hidden}}
+.header::after{{content:'';position:absolute;right:-60px;top:-60px;width:220px;height:220px;border-radius:50%;background:var(--sura-aqua);opacity:.08;pointer-events:none}}
+.header-left{{display:flex;align-items:center;gap:18px}}
+.header-logo svg{{height:36px;width:auto}}
+.header-divider{{width:1px;height:34px;background:rgba(255,255,255,.25);border-radius:1px}}
+.header-title{{font-size:1.45rem;font-weight:700;letter-spacing:-.01em;line-height:1.2}}
+.header-subtitle{{font-size:.82rem;font-weight:400;opacity:.7;margin-top:2px}}
+.header-badge{{background:var(--sura-aqua);color:#fff;padding:6px 16px;border-radius:999px;font-size:.78rem;font-weight:600;letter-spacing:.02em;white-space:nowrap}}
+
+/* Resumen panel */
+.resumen-panel{{display:flex;flex-wrap:wrap;gap:14px;padding:18px 32px 4px;justify-content:center}}
+.resumen-stat{{background:var(--surface-card);border:1px solid var(--border);border-radius:var(--radius-md);padding:12px 20px;text-align:center;min-width:100px;box-shadow:0 1px 4px rgba(0,48,87,.04)}}
+.resumen-num{{font-size:1.6rem;font-weight:800;line-height:1}}
+.resumen-label{{font-size:.68rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-top:3px}}
+.color-bloquear{{color:var(--color-bloquear)}}
+.color-monitorear{{color:var(--color-monitorear)}}
+.color-salir{{color:var(--color-salir)}}
+.color-mantener{{color:var(--color-mantener)}}
+.color-alerta{{color:#c0392b}}
+.color-holgura{{color:var(--sura-aqua)}}
+
+/* Toolbar */
+.toolbar{{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:14px 32px 6px}}
+.toolbar-btn{{border:1px solid var(--border);background:var(--surface-card);color:var(--text-secondary);border-radius:var(--radius-sm);padding:6px 14px;font-size:.78rem;font-weight:600;cursor:pointer;transition:all var(--transition);font-family:var(--font)}}
+.toolbar-btn:hover{{background:var(--sura-blue);color:#fff;border-color:var(--sura-blue);transform:translateY(-1px)}}
+
+/* Columnas */
+.contenedor-columnas{{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:22px;padding:18px 32px 40px}}
+.columna{{background:var(--surface-card);border-radius:var(--radius-lg);padding:0;box-shadow:var(--shadow-card);border:1px solid var(--border);transition:transform var(--transition),box-shadow var(--transition);overflow:hidden;display:flex;flex-direction:column}}
+.columna:hover{{transform:translateY(-3px);box-shadow:var(--shadow-hover)}}
+.titulo-bloque{{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;font-weight:700;text-transform:uppercase;font-size:.92rem;letter-spacing:.06em;color:#fff}}
+.titulo-bloque .count-badge{{background:rgba(255,255,255,.25);padding:2px 10px;border-radius:999px;font-size:.72rem;font-weight:600}}
+.bloquear{{background:linear-gradient(135deg,#3b6fdb 0%,#6a9bff 100%)}}
+.monitorear{{background:linear-gradient(135deg,#d04848 0%,#f08080 100%)}}
+.salir{{background:linear-gradient(135deg,#2d8f50 0%,#6ecf8e 100%)}}
+.mantener{{background:linear-gradient(135deg,#7a8fa8 0%,#bac9de 100%)}}
+ul,ol{{list-style:none}}
+.lista-vehiculos{{padding:12px 14px 14px;flex:1}}
+
+/* Vehículo */
+.vehiculo{{border:1px solid var(--border);border-radius:var(--radius-md);margin-bottom:10px;background:var(--surface-card);transition:border-color var(--transition),box-shadow var(--transition);overflow:hidden}}
+.vehiculo:last-child{{margin-bottom:0}}
+.vehiculo:hover{{border-color:var(--sura-aqua-light);box-shadow:0 2px 8px rgba(0,174,199,.1)}}
+.columna:nth-child(1) .vehiculo{{border-left:3px solid var(--color-bloquear)}}
+.columna:nth-child(2) .vehiculo{{border-left:3px solid var(--color-monitorear)}}
+.columna:nth-child(3) .vehiculo{{border-left:3px solid var(--color-salir)}}
+.columna:nth-child(4) .vehiculo{{border-left:3px solid var(--color-mantener)}}
+.vehiculo-header{{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;cursor:pointer;-webkit-user-select:none;user-select:none;transition:background var(--transition)}}
+.vehiculo-header:hover{{background:rgba(0,113,206,.03)}}
+.vehiculo-nombre{{font-weight:600;color:var(--text-primary);font-size:.88rem;display:flex;align-items:center;gap:6px}}
+.vehiculo-nombre .marca{{font-weight:700}}
+.vehiculo-nombre .modelo{{font-weight:500;color:var(--text-secondary)}}
+.vehiculo-nombre .sep{{color:var(--sura-gray-light);font-weight:400}}
+
+/* Alert dot */
+.alert-dot{{width:8px;height:8px;border-radius:50%;background:#c0392b;display:inline-block;flex-shrink:0;animation:pulse-alert 1.8s infinite}}
+@keyframes pulse-alert{{0%,100%{{opacity:1}}50%{{opacity:.35}}}}
+
+/* Info button */
+.info-btn{{border:none;background:var(--sura-blue);color:#fff;border-radius:50%;width:26px;height:26px;padding:0;font-size:.72rem;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:all var(--transition);flex-shrink:0}}
+.info-btn svg{{width:14px;height:14px;transition:transform .3s cubic-bezier(.4,0,.2,1)}}
+.info-btn.active{{background:var(--sura-aqua)}}
+.info-btn.active svg{{transform:rotate(180deg)}}
+.info-btn:hover{{transform:scale(1.12);box-shadow:0 2px 8px rgba(0,51,160,.3)}}
+.info-btn:focus-visible{{outline:2px solid var(--sura-yellow);outline-offset:2px}}
+
+/* Detalle */
+.vehiculo-detalle{{max-height:0;overflow:hidden;transition:max-height .4s cubic-bezier(.4,0,.2,1),padding .4s cubic-bezier(.4,0,.2,1),opacity .3s ease;opacity:0;padding:0 14px;border-top:0 solid transparent;background:linear-gradient(180deg,rgba(0,113,206,.02) 0%,transparent 100%)}}
+.vehiculo-detalle.visible{{max-height:500px;opacity:1;padding:10px 14px 14px;border-top:1px dashed var(--border)}}
+
+/* Transition badge */
+.transition-badge{{display:inline-block;padding:3px 10px;border-radius:999px;font-size:.7rem;font-weight:700;letter-spacing:.03em;margin-bottom:8px;color:#fff}}
+.transition-bloquear{{background:linear-gradient(90deg,#3b6fdb,#6a9bff)}}
+.transition-monitorear{{background:linear-gradient(90deg,#d04848,#f08080)}}
+.transition-salir{{background:linear-gradient(90deg,#2d8f50,#6ecf8e)}}
+.transition-mantener{{background:linear-gradient(90deg,#7a8fa8,#bac9de)}}
+
+
+/* Metric pills */
+.metric-row{{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}}
+.metric-pill{{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:.72rem;font-weight:600;background:var(--surface);border:1px solid var(--border)}}
+.pill-lr{{color:var(--sura-blue)}}
+.pill-aach{{color:var(--sura-aqua)}}
+.metric-adj{{font-weight:400;color:var(--text-muted);font-size:.66rem}}
+
+/* Interpretación */
+.interpretacion{{font-size:.78rem;color:var(--text-secondary);font-style:italic;line-height:1.45;margin-bottom:8px;padding:6px 10px;background:rgba(0,174,199,.04);border-radius:var(--radius-sm);border-left:2px solid var(--sura-aqua)}}
+
+.vehiculo-detalle ul{{padding-left:0}}
+.vehiculo-detalle li{{font-size:.82rem;color:var(--text-secondary);padding:3px 0;display:flex;align-items:baseline;gap:6px}}
+.vehiculo-detalle li::before{{content:'';display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--sura-aqua);flex-shrink:0;margin-top:6px}}
+.detalle-label{{font-weight:600;color:var(--text-primary);white-space:nowrap}}
+.badge-bloqueada{{display:inline-block;padding:1px 8px;border-radius:999px;background:rgba(208,72,72,.12);color:#c0392b;font-size:.72rem;font-weight:700;letter-spacing:.03em}}
+
+/* Footer */
+.footer{{text-align:center;padding:18px 32px;font-size:.72rem;color:var(--text-muted);border-top:1px solid var(--border);background:var(--surface-card)}}
+
+/* Responsive */
+@media(max-width:768px){{.header{{flex-direction:column;align-items:flex-start;padding:20px 18px}}.header-badge{{align-self:flex-start}}.contenedor-columnas{{grid-template-columns:1fr;padding:14px 12px 32px}}.toolbar{{padding:10px 12px 4px}}.resumen-panel{{padding:12px 12px 0}}}}
+@media(max-width:480px){{.header-title{{font-size:1.15rem}}.resumen-stat{{min-width:70px;padding:8px 12px}}.resumen-num{{font-size:1.2rem}}}}
+
+/* Animations */
+@keyframes fadeSlideUp{{from{{opacity:0;transform:translateY(18px)}}to{{opacity:1;transform:translateY(0)}}}}
+.columna{{animation:fadeSlideUp .5s ease both}}
+.columna:nth-child(1){{animation-delay:.05s}}
+.columna:nth-child(2){{animation-delay:.15s}}
+.columna:nth-child(3){{animation-delay:.25s}}
+</style>
+</head>
+<body>
+<header class="header">
+  <div class="header-left">
+    <div class="header-logo">{logo_svg}</div>
+    <div class="header-divider"></div>
+    <div>
+      <div class="header-title">Estado de Vehículos</div>
+      <div class="header-subtitle">Interpretación automática de resultados — Marcas-modelo más robados</div>
+    </div>
+  </div>
+  <div class="header-badge">{total_cambios} cambios sugeridos</div>
+</header>
+{resumen_html}
+<div class="toolbar">
+  <button class="toolbar-btn" id="btnDownload">⬇ Descargar HTML</button>
+  <button class="toolbar-btn" id="btnExpandAll">Expandir todo</button>
+  <button class="toolbar-btn" id="btnCollapseAll">Colapsar todo</button>
+</div>
+<div class="contenedor-columnas">
+{columnas_html}
+</div>
+<footer class="footer">Seguros SURA — Interpretación automática de resultados del análisis de marcas-modelo más robados del último trimestre</footer>
+<script>
+(function(){{
+  document.querySelectorAll('.vehiculo-header').forEach(function(hdr){{
+    hdr.addEventListener('click',function(){{
+      var det=hdr.nextElementSibling;var btn=hdr.querySelector('.info-btn');
+      det.classList.toggle('visible');if(btn)btn.classList.toggle('active');
+    }});
+  }});
+  document.getElementById('btnExpandAll').addEventListener('click',function(){{
+    document.querySelectorAll('.vehiculo-detalle').forEach(function(d){{d.classList.add('visible')}});
+    document.querySelectorAll('.info-btn').forEach(function(b){{b.classList.add('active')}});
+  }});
+  document.getElementById('btnCollapseAll').addEventListener('click',function(){{
+    document.querySelectorAll('.vehiculo-detalle').forEach(function(d){{d.classList.remove('visible')}});
+    document.querySelectorAll('.info-btn').forEach(function(b){{b.classList.remove('active')}});
+  }});
+  document.getElementById('btnDownload').addEventListener('click',function(){{
+    var html='<!DOCTYPE html>'+document.documentElement.outerHTML;
+    var blob=new Blob([html],{{type:'text/html;charset=utf-8'}});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url;a.download='interpretaciones_vehiculos.html';
+    document.body.appendChild(a);a.click();
+    document.body.removeChild(a);URL.revokeObjectURL(url);
+  }});
+}})();
+</script>
+</body>
+</html>'''
+
+    HTML_SALIDA.mkdir(parents=True, exist_ok=True)
+    output_path = HTML_SALIDA / nombre_archivo
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(html_doc)
+
+    return output_path
+
+# ── Generar el archivo HTML ────────────────────────────────────────────────
+ruta = generar_html_interpretaciones(df_robos)
+print(f"Archivo generado: {ruta}")
+```
+
+## Generación del Excel de Más Robados
+
+Genera automáticamente un archivo `Excel` con los resultados automatizados (con el mismo formato del template `Template_Mas_Robados.xlsx`), actualizado con los datos y propuestas del análisis.
+
+```{python}
+#| label: generar-excel-mas-robados
+#| echo: false
+#| warning: false
+#| error: false
+#| cache: true          # Activa el cache de celdas
+#| freeze: auto         # Evita re-renderizar si no hubo cambios globales
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Estilos EXACTOS extraídos de Template_Mas_Robados.xlsx
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Fonts
+FONT_BASE = Font(name="Aptos Narrow", size=11)
+FONT_BOLD = Font(name="Aptos Narrow", size=11, bold=True)
+FONT_TITLE = Font(name="Aptos Narrow", size=14, bold=True,
+                  color=Color(theme=5, tint=-0.25))  # dark red
+FONT_SUBTITLE = Font(name="Aptos Narrow", size=11, bold=True, italic=True,
+                     color=Color(theme=5))  # red
+FONT_DATE = Font(name="Aptos Narrow", size=11, italic=True)
+FONT_HEADER = Font(name="Aptos Narrow", size=11, bold=True,
+                   color=Color(theme=0))  # blanco (theme=0)
+
+# Fills (theme colors exactos del template)
+FILL_HEADER   = PatternFill("solid", fgColor=Color(theme=4, tint=-0.25))
+FILL_SUBHDR   = PatternFill("solid", fgColor=Color(theme=3, tint=0.75))
+FILL_LABEL    = PatternFill("solid", fgColor=Color(theme=3, tint=0.9))
+FILL_AGREGAN  = PatternFill("solid", fgColor=Color(theme=9, tint=0.8))
+FILL_ELIMINAN = PatternFill("solid", fgColor=Color(theme=5, tint=0.8))
+
+# Alignment
+ALIGN_CENTER = Alignment(horizontal="center")
+ALIGN_LABEL  = Alignment(horizontal="center", vertical="center", text_rotation=90)
+
+# Borders
+_thin   = Side(style="thin")
+_medium = Side(style="medium")
+_none   = Side()
+
+BORDER_HEADER  = Border(top=_medium, bottom=_medium, left=_medium, right=_medium)
+BORDER_HEADER_R = Border(top=_medium, bottom=_medium, right=_medium)
+BORDER_SUBHDR  = Border(top=_medium, bottom=_medium, left=_medium, right=_medium)
+BORDER_SUBHDR_R = Border(top=_medium, bottom=_medium, right=_medium)
+BORDER_DATA_L  = Border(top=_thin, bottom=_thin, left=_medium, right=_thin)
+BORDER_DATA_R  = Border(top=_thin, bottom=_thin, left=_thin, right=_medium)
+BORDER_DATA_L0 = Border(bottom=_thin, left=_medium, right=_thin)   # sin top
+BORDER_DATA_R0 = Border(bottom=_thin, left=_thin, right=_medium)   # sin top
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Utilidades
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _separar(nombre: str) -> tuple[str, str]:
+    if " - " in nombre:
+        p = nombre.split(" - ", 1)
+        return p[0].strip(), p[1].strip()
+    return nombre.strip(), ""
+
+
+def _write_data(ws, datos, start_row, col_m, col_d, fill=None, first_top=True):
+    """Escribe filas MARCA/MODELO con borders y fill (solo en celdas con contenido)."""
+    for i, nombre in enumerate(datos):
+        marca, modelo = _separar(nombre)
+        r = start_row + i
+        bl = BORDER_DATA_L if (i > 0 or first_top) else BORDER_DATA_L0
+        br = BORDER_DATA_R if (i > 0 or first_top) else BORDER_DATA_R0
+
+        cm = ws.cell(row=r, column=col_m, value=marca)
+        cm.font = FONT_BASE
+        cm.alignment = ALIGN_CENTER
+        cm.border = bl
+        if fill:
+            cm.fill = fill
+
+        cd = ws.cell(row=r, column=col_d, value=modelo)
+        cd.font = FONT_BASE
+        cd.alignment = ALIGN_CENTER
+        cd.border = br
+        if fill:
+            cd.fill = fill
+
+
+def _hide_gridlines(ws):
+    ws.views.sheetView[0].showGridLines = False
+
+
+def _copy_theme(src_xlsx: str, dst_xlsx: str):
+    """Reemplaza el theme1.xml del dst con el del src para colores idénticos."""
+    tmp_path = dst_xlsx + ".tmp"
+    with zipfile.ZipFile(src_xlsx, 'r') as src_zip:
+        theme_data = src_zip.read('xl/theme/theme1.xml')
+    with zipfile.ZipFile(dst_xlsx, 'r') as zin, \
+         zipfile.ZipFile(tmp_path, 'w') as zout:
+        for item in zin.infolist():
+            if item.filename == 'xl/theme/theme1.xml':
+                zout.writestr(item, theme_data)
+            else:
+                zout.writestr(item, zin.read(item.filename))
+    shutil.move(tmp_path, dst_xlsx)
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Clasificación de datos desde df_robos
+# ═══════════════════════════════════════════════════════════════════════════
+
+_me = {"BLOQUEADA": "B", "MONITOREADA": "M", "AACH": "N"}
+_mp = {"BLOQUEAR": "B", "MONITOREAR": "M", "SALIR": "N"}
+
+bloqueados_final = sorted(
+    df_robos.filter(pl.col("PROPUESTA") == "BLOQUEAR")
+    .select("MARCA_MODELO").to_series().to_list()
+)
+monitoreados_final = sorted(
+    df_robos.filter(pl.col("PROPUESTA") == "MONITOREAR")
+    .select("MARCA_MODELO").to_series().to_list()
+)
+
+mantienen_bloq, mantienen_mon = [], []
+agregan_bloq, agregan_mon = [], []
+eliminan_bloq, eliminan_mon = [], []
+
+for row in df_robos.iter_rows(named=True):
+    mm = row["MARCA_MODELO"]
+    ga = _me.get(row["ESTADO SUSCRIPCION"], "N")
+    gp = _mp.get(row["PROPUESTA"], "N")
+
+    if ga == gp:
+        if gp == "B": mantienen_bloq.append(mm)
+        elif gp == "M": mantienen_mon.append(mm)
+    else:
+        if ga == "B": eliminan_bloq.append(mm)
+        elif ga == "M": eliminan_mon.append(mm)
+        if gp == "B": agregan_bloq.append(mm)
+        elif gp == "M": agregan_mon.append(mm)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Generación del Excel
+# ═══════════════════════════════════════════════════════════════════════════
+
+# from pathlib import Path
+# from datetime import datetime
+
+EXCEL_SALIDA = PROJECT_ROOT / "Salidas" / "Excel"
+
+def generar_excel(path: str):
+    wb = Workbook()
+
+    # ─── HOJA FINAL ─────────────────────────────────────────────────────
+    ws = wb.active
+    ws.title = "FINAL"
+    _hide_gridlines(ws)
+
+    # Título (rojo oscuro, bold, 14pt)
+    ws["B1"] = "LISTADO FINAL"
+    ws["B1"].font = FONT_TITLE
+
+    ws["B2"] = "Actualizado:"
+    ws["B2"].font = FONT_SUBTITLE  # rojo, bold, italic
+    ws["C2"] = datetime.now().replace(day=1, hour=0, minute=0,
+                                      second=0, microsecond=0)
+    ws["C2"].font = FONT_DATE  # italic
+    ws["C2"].number_format = "MMM-YY"
+
+    # Headers fila 4 (azul con texto blanco)
+    ws.merge_cells("B4:C4")
+    c = ws["B4"]
+    c.value = "SIN SUSCRIPCION "
+    c.font = FONT_HEADER; c.fill = FILL_HEADER
+    c.alignment = ALIGN_CENTER; c.border = BORDER_HEADER
+    ws["C4"].fill = FILL_HEADER; ws["C4"].border = BORDER_HEADER_R
+
+    ws.merge_cells("E4:F4")
+    c = ws["E4"]
+    c.value = "SUSCRIPCION MONITOREADA"
+    c.font = FONT_HEADER; c.fill = FILL_HEADER
+    c.alignment = ALIGN_CENTER; c.border = BORDER_HEADER
+    ws["F4"].fill = FILL_HEADER; ws["F4"].border = BORDER_HEADER_R
+
+    # Sub-headers fila 6 (gris claro)
+    for col, lbl in [(2,"MARCA"),(3,"MODELO"),(5,"MARCA"),(6,"MODELO")]:
+        c = ws.cell(row=6, column=col, value=lbl)
+        c.font = FONT_BASE; c.fill = FILL_SUBHDR
+        c.alignment = ALIGN_CENTER; c.border = BORDER_SUBHDR
+
+    # Datos
+    _write_data(ws, bloqueados_final, 7, 2, 3)
+    _write_data(ws, monitoreados_final, 7, 5, 6, first_top=False)
+
+    # Anchos
+    for cl, w in {"A":2,"B":16,"C":20,"D":3,"E":16,"F":20}.items():
+        ws.column_dimensions[cl].width = w
+
+    # ─── HOJA RESUMEN CAMBIOS ──────────────────────────────────────────
+    ws2 = wb.create_sheet("RESUMEN CAMBIOS")
+    _hide_gridlines(ws2)
+
+    # Headers fila 4
+    ws2.merge_cells("D4:E4")
+    c = ws2["D4"]
+    c.value = "SIN SUSCRIPCION "
+    c.font = FONT_HEADER; c.fill = FILL_HEADER
+    c.alignment = ALIGN_CENTER; c.border = BORDER_HEADER
+    ws2["E4"].fill = FILL_HEADER; ws2["E4"].border = BORDER_HEADER_R
+
+    ws2.merge_cells("G4:H4")
+    c = ws2["G4"]
+    c.value = "SUSCRIPCION MONITOREADA"
+    c.font = FONT_HEADER; c.fill = FILL_HEADER
+    c.alignment = ALIGN_CENTER; c.border = BORDER_HEADER
+    ws2["H4"].fill = FILL_HEADER; ws2["H4"].border = BORDER_HEADER_R
+
+    # Sub-headers fila 6
+    for col, lbl in [(4,"MARCA"),(5,"MODELO"),(7,"MARCA"),(8,"MODELO")]:
+        c = ws2.cell(row=6, column=col, value=lbl)
+        c.font = FONT_BASE; c.fill = FILL_SUBHDR
+        c.alignment = ALIGN_CENTER; c.border = BORDER_SUBHDR
+
+    # ── SE MANTIENEN ──
+    n_m = max(len(mantienen_bloq), len(mantienen_mon), 1)
+    if n_m > 1:
+        ws2.merge_cells(start_row=6, start_column=2,
+                        end_row=6 + n_m, end_column=2)
+    lbl = ws2.cell(row=6, column=2, value="SE MANTIENEN")
+    lbl.font = FONT_BASE; lbl.fill = FILL_LABEL; lbl.alignment = ALIGN_LABEL
+
+    _write_data(ws2, mantienen_bloq, 7, 4, 5)
+    _write_data(ws2, mantienen_mon,  7, 7, 8, first_top=False)
+
+    # ── AGREGAN ──
+    sep = 7 + n_m  # fila separadora vacía
+    ra = sep + 1
+    n_a = max(len(agregan_bloq), len(agregan_mon), 1)
+
+    if n_a > 1:
+        ws2.merge_cells(start_row=ra, start_column=2,
+                        end_row=ra + n_a - 1, end_column=2)
+    lbl = ws2.cell(row=ra, column=2, value="AGREGAN")
+    lbl.font = FONT_BASE; lbl.fill = FILL_AGREGAN; lbl.alignment = ALIGN_LABEL
+
+    _write_data(ws2, agregan_bloq, ra, 4, 5, fill=FILL_AGREGAN)
+    _write_data(ws2, agregan_mon,  ra, 7, 8, fill=FILL_AGREGAN)
+
+    # ── ELIMINAN ──
+    re = ra + n_a + 1
+    n_e = max(len(eliminan_bloq), len(eliminan_mon), 1)
+
+    if n_e > 1:
+        ws2.merge_cells(start_row=re, start_column=2,
+                        end_row=re + n_e - 1, end_column=2)
+    lbl = ws2.cell(row=re, column=2, value="ELIMINAN")
+    lbl.font = FONT_BASE; lbl.fill = FILL_ELIMINAN; lbl.alignment = ALIGN_LABEL
+
+    _write_data(ws2, eliminan_bloq, re, 4, 5, fill=FILL_ELIMINAN)
+    _write_data(ws2, eliminan_mon,  re, 7, 8, fill=FILL_ELIMINAN)
+
+    # Anchos (exactos del template)
+    for cl, w in {"A":2,"B":5.7,"C":2.6,"D":22.4,"E":23.3,
+                  "F":8.6,"G":17.6,"H":26}.items():
+        ws2.column_dimensions[cl].width = w
+    for r in [3, 4, 5, 6]:
+        ws2.row_dimensions[r].height = 15.75
+
+    # ── Guardar ──
+    wb.save(path)
+
+    # Copiar el theme del template para que los colores theme sean idénticos
+    template_path = "Template_Mas_Robados.xlsx"
+    if os.path.exists(template_path):
+        _copy_theme(template_path, path)
+
+    print(f"[OK] Excel generado: {path}")
+    print(f"     Bloqueados:   {len(bloqueados_final)}")
+    print(f"     Monitoreados: {len(monitoreados_final)}")
+    print(f"     Mantienen B/M: {len(mantienen_bloq)}/{len(mantienen_mon)}")
+    print(f"     Agregan B/M:   {len(agregan_bloq)}/{len(agregan_mon)}")
+    print(f"     Eliminan B/M:  {len(eliminan_bloq)}/{len(eliminan_mon)}")
+
+# from datetime import datetime
+
+# Fecha actual en formato AAAAMMDD
+fecha_str = datetime.now().strftime("%Y%m%d")
+
+nombre_archivo = f"Mas_Robados_FINAL_{fecha_str}.xlsx"
+ruta_archivo = EXCEL_SALIDA / nombre_archivo
+
+generar_excel(str(ruta_archivo))
+```

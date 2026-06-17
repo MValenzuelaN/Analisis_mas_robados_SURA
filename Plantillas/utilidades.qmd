@@ -1,145 +1,25 @@
----
-title: "Marcas-modelo más robados del último trimestre"
-subtitle: "Resumen de resultados"
-author: "Matías Valenzuela Nuche"
-lang: es
-date: last-modified
-date-format: long
+## Utilidades
 
-# Kernel
-jupyter: python3
+Funciones generales para obtener resultados personalizados y facilitar el análisis automatizado.
 
-# --- PARAMETRIZACION ---
-# Define aqui las variables que controlan tu informe
-params:
-  #titulo_reporte: "Analisis de Datos"
-  #seed: 42                 # Semilla para reproducibilidad
-  #n_muestras: 100          # Ejemplo de parametro numerico
-  mostrar_codigo: false     # Control de visibilidad
-  color_grafico: "blue"    # Ejemplo de parametro de texto
-
-# Comportamiento global de las celdas
-execute:
-  echo: false
-  warning: false
-  error: false
-  cache: false          # Activa el cache de celdas
-  freeze: auto         # Evita re-renderizar si no hubo cambios globales
-
-
-format:
-  html:
-    theme: flatly
-    page-layout: full
-    toc: true
-    toc-location: left
-    toc-title: "Contenido"
-    toc-depth: 3
-    toc-expand: true
-    number-sections: true
-    number-depth: 3
-    smooth-scroll: true
-    embed-resources: true
-    fig-cap-location: bottom
-    tbl-cap-location: top
-    highlight-style: atom-one
-    html-math-method: katex
-    link-external-icon: true
-    link-external-newwindow: true
-    css: "css/styles.css"
-
-title-block-banner: true
-editor: visual
----
-
-::: {.callout-note icon="true"}
-## Resumen
-
-Este *informe automatizado* desarrolla un análisis exploratorio de datos (AED) de las Marcas-Modelo más robadas en el último trimestre, con base en información de la lista de **bloqueados** y **agravados** del análisis anterior, junto con la lista proporcionada por el informe trimestral de la AACH. La finalidad está en detallar y justificar cualquier modificación necesaria para Bloquear o Monitorear la suscripción de estas clases de vehículos.
-:::
-
-# Contexto del informe
-
-Este informe analiza los registros de la base de datos `Motor_personal_final` del último trimestre para actualizar la lista de marcas-modelo **bloqueadas** y **monitoreadas** por SURA a raíz de su alta siniestralidad y cantidad de robos. LA lista de marcas.modelo de interés se obtiene de las 2 tablas siguientes:
-
-![Lista de bloqueos y monitoreos anterior de SURA respecto a las marcas-modelo más robadas.](insumo-mas-robados.png)
-
-![Tablas del informe de la AACH.](tablas_AACH.png)
-
-A partir de esto, el informe pasa por una serie de procesos automatizados hasta generar el nuevo excel con la lista actualizada.
-
-```{python}
-#| label: imports-config
-#| echo: false
-#| warning: false
-#| error: false
-#| cache: false          # Activa el cache de celdas
-#| freeze: auto         # Evita re-renderizar si no hubo cambios globales
-
-from __future__ import annotations
-
-import base64
-from IPython.utils.capture import capture_output
-import math
-import re
-import sys
-from typing import Any, List, Dict, Optional, Sequence, Union, Tuple
-
-import io
-from io import StringIO
-
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.styles.colors import Color
-from openpyxl.utils import get_column_letter
-from datetime import datetime
-import zipfile, shutil, os
-
-import numpy as np
-import polars as pl
-import pandas as pd  # Solo para compatibilidad con Plotly
-from pyspark.sql import SparkSession
-import pyodbc
-from pathlib import Path
-
-# print(pyodbc.drivers()) # Comprobar Drivers
-
-# Configuración de parámetros (equivalente a params en R)
-# Nota: En Python/Quarto, los params del YAML no están disponibles automáticamente
-PARAMS = {
-    #'titulo_reporte': 'Análisis de Datos',
-    #'seed': 42,
-    #'n_muestras': 100,
-    'mostrar_codigo': False,
-    'color_grafico': 'blue'
-}
-
-# Forzar modo offline para Plotly (evita descargas de CDN)
-import plotly.offline as py_offline
-import plotly.io as pio
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from scipy import stats as sp_stats
-
-pio.renderers.default = "notebook" # o "iframe" / "browser" dependiendo de lo que Quarto prefiera, pero para HTML estático:
-# Quarto maneja plotly automágicamente, pero esto ayuda a veces:
-py_offline.init_notebook_mode(connected=False)
-
-# Configuración necesaria para PrettyTibble
-from IPython.display import HTML, display
-
-# Configuración de reproducibilidad
-SEED = PARAMS.get('seed', None)  # devuelve None si no existe 'seed'
-
-```
+-   **Pretty_table**: Es un visualizador de tablas de datos en formato HTML. Imita las características de `Tibble` en el paquete **Tidyverse** de `R` (por eso es un `Peudo-tibble`), pero agrega funcionalidades extra. La tabla se caracteriza por:
+    -   En su formato estandar, mantiene una visualización minimalista y elegante.
+    -   Muestra los tipos de variable de cada columna y las dimensiones de la tabla.
+    -   Muestra si se visualiza una tabla de datos desde un df de `pandas`, `polars` o `pyspark`.
+    -   Puede ponerse nombre a la tabla.
+    -   Puede colorear filas o columnas según categorías (las columnas tienen prioridad de coloración).
+    -   Muestra botones para descargar la tabla en formatos: `CSV`, `EXCEL`, `HTML` (esta opción muestra la tabla tal como aparece en el informe) o `PARQUET`.
 
 ```{python}
 #| label: prettytable
-#| echo: false
-#| warning: false
-#| error: false
-#| cache: false          # Activa el cache de celdas
-#| freeze: auto         # Evita re-renderizar si no hubo cambios globales
+#| echo: true
+#| cache: true
+
+# from IPython.display import HTML, display
+# from typing import Optional, Dict, Any
+# import pandas as pd
+# import base64
+# import io
 
 def pretty_table(
     data: Any,
@@ -165,7 +45,7 @@ def pretty_table(
 
     Soporta: Polars DataFrame, PySpark DataFrame, Pandas DataFrame.
     """
-    
+
     # Esquema de colores por defecto
     if color_scheme is None:
         color_scheme = {
@@ -199,12 +79,12 @@ def pretty_table(
             "Categorical": "#FFEAA7", # Polars
             "default": "#95A5A6"    # Gris para otros
         }
-    
+
     # Detectar tipo de DataFrame y convertir a Pandas
     df_type = type(data).__name__
     module_name = type(data).__module__
     original_types = {}
-    
+
     if "polars" in module_name.lower():
         # Polars DataFrame
         original_types = {col: str(dtype) for col, dtype in zip(data.columns, data.dtypes)}
@@ -213,12 +93,12 @@ def pretty_table(
         col_names = data.columns
         df_pandas = data.head(n).to_pandas()
         source_lib = "Polars"
-        
+
     elif "pyspark" in module_name.lower():
         # PySpark DataFrame
         schema = data.schema
         original_types = {
-            field.name: str(field.dataType).replace("Type()", "") 
+            field.name: str(field.dataType).replace("Type()", "")
             for field in schema.fields
         }
         n_rows = data.count()
@@ -226,7 +106,7 @@ def pretty_table(
         col_names = data.columns
         df_pandas = data.limit(n).toPandas()
         source_lib = "Spark"
-        
+
     elif "pandas" in module_name.lower() or df_type == "DataFrame":
         # Pandas DataFrame
         original_types = {col: str(dtype) for col, dtype in data.dtypes.items()}
@@ -235,15 +115,15 @@ def pretty_table(
         col_names = list(data.columns)
         df_pandas = data.head(n)
         source_lib = "Pandas"
-        
+
     else:
         raise TypeError(
             f"Tipo de DataFrame no soportado: {df_type}. "
             "Use Polars, PySpark o Pandas."
         )
-    
+
     rows_hidden = max(0, n_rows - n)
-    
+
     rows_hidden = max(0, n_rows - n)
 
     # =========================
@@ -275,7 +155,7 @@ def pretty_table(
             else:
                 # Asignar un color de la paleta base, ciclando si hay más categorías que colores
                 row_color_map[val] = base_row_colors[i % len(base_row_colors)]
-    
+
     # =========================
     # Coloreado por columna
     # =========================
@@ -308,24 +188,24 @@ def pretty_table(
         if highlight_palette and key in highlight_palette:
             return highlight_palette[key]
         return row_color_map.get(key, "")
-    
+
     # ---------------------------------------------
 
     # Función auxiliar para obtener color según tipo
     def get_type_color(type_str: str) -> str:
         if type_str in color_scheme:
             return color_scheme[type_str]
-        
+
         type_lower = type_str.lower()
         for key, color in color_scheme.items():
             if key.lower() in type_lower or type_lower in key.lower():
                 return color
-        
+
         return color_scheme.get("default", "#95A5A6")
-    
+
     # ID único para la tabla
     table_id = f"pretty-table-{id(data)}"
-    
+
     # ---- CSS Tabla + Botones ----
     css = f"""
     <style>
@@ -439,7 +319,7 @@ def pretty_table(
     }}
     </style>
     """
-    
+
     # Encabezado de título
     dim_text = f"- Pseudo-tibble: {n_rows:,} × {n_cols}"
     if title is not None and str(title).strip() != "":
@@ -463,17 +343,17 @@ def pretty_table(
             </td>
         </tr>
         """
-    
+
     # Encabezados de columna con tipos
     headers_html = "<tr>"
     for col in col_names:
         type_str = original_types.get(col, "unknown")
         type_color = get_type_color(type_str)
-        
+
         type_display = type_str.split(".")[-1]
         if len(type_display) > 12:
             type_display = type_display[:10] + "…"
-        
+
         if show_types:
             headers_html += f"""
             <th>
@@ -486,7 +366,7 @@ def pretty_table(
         else:
             headers_html += f"<th><div class='col-name'>{col}</div></th>"
     headers_html += "</tr>"
-    
+
     # Filas de datos
     rows_html = ""
     for idx, row in df_pandas.iterrows():
@@ -522,13 +402,13 @@ def pretty_table(
 
         rows_html += "</tr>"
 
-    
+
     # Pie de página
     if rows_hidden > 0:
         footer_text = f"- … {rows_hidden:,} filas sin mostrar"
     else:
         footer_text = "- Mostrando todas las filas"
-    
+
     footer_html = f"""
     <tr>
         <td colspan="{n_cols}" class="footer-row">
@@ -560,7 +440,7 @@ def pretty_table(
         # CSV
         csv_str = df_pandas.to_csv(index=False)
         b64_csv = base64.b64encode(csv_str.encode("utf-8")).decode("utf-8")
-        
+
         # HTML CON MISMO ESTILO QUE LA VISTA                         # <<<
         # Documento HTML completo (standalone)
         html_document = f"""
@@ -589,26 +469,26 @@ def pretty_table(
         df_pandas.to_parquet(parquet_buffer, index=False, engine="pyarrow")
         parquet_buffer.seek(0)
         b64_parquet = base64.b64encode(parquet_buffer.read()).decode("utf-8")
-        
+
         downloads_html = f"""
         <div id="{table_id}-downloads">
-            <a class="download-btn" 
-               download="{filename_base}.csv" 
+            <a class="download-btn"
+               download="{filename_base}.csv"
                href="data:text/csv;base64,{b64_csv}">
                Descargar CSV
             </a>
-            <a class="download-btn" 
-               download="{filename_base}.xlsx" 
+            <a class="download-btn"
+               download="{filename_base}.xlsx"
                href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_excel}">
                Descargar Excel
             </a>
-            <a class="download-btn" 
-               download="{filename_base}.html" 
+            <a class="download-btn"
+               download="{filename_base}.html"
                href="data:text/html;base64,{b64_html}">
                Descargar HTML
             </a>
-            <a class="download-btn" 
-               download="{filename_base}.parquet" 
+            <a class="download-btn"
+               download="{filename_base}.parquet"
                href="data:application/octet-stream;base64,{b64_parquet}">
                Descargar Parquet
             </a>
@@ -623,17 +503,80 @@ def pretty_table(
     {downloads_html}
     {table_html}
     """
-    
+
     display(HTML(full_html))
+
+print("[OK] Función pretty_table definida con botones de descarga, HTML estilado, coloreado por variable categórica.")
 ```
+
+-   **Query_to_df**: ejecuta una consulta en lenguaje `SQL` desde `Python` a través de una conexión con una base de datos y obtiene la tabla de datos resultante en formato `pandas`, `polars` o `pyspark`.
+
+```{python}
+#| label: Crear DataFrame desde SQL-SERVER -> Python
+#| echo: true
+#| cache: true
+
+# import pyodbc
+# import polars as pl
+# import pandas as pd
+# from pyspark.sql import SparkSession
+
+# Requiere connection_string
+
+
+def query_to_df(
+    sql: str,
+    engine: str = "polars",
+    spark: SparkSession | None = None,
+):
+    engine = engine.lower()
+
+    conn = pyodbc.connect(connection_string)
+    cursor = conn.cursor()
+    cursor.execute(sql)
+
+    rows = cursor.fetchall()
+    columns = [col[0] for col in cursor.description]
+
+    cursor.close()
+    conn.close()
+
+    if engine == "polars":
+        # Paso intermedio por pandas: robusto y evita ShapeError
+        pdf = pd.DataFrame.from_records(rows, columns=columns)
+        return pl.from_pandas(pdf)
+
+
+    elif engine == "pandas":
+        return pd.DataFrame.from_records(rows, columns=columns)
+
+    elif engine == "pyspark":
+        if spark is None:
+            spark = (
+                SparkSession.builder
+                .appName("SQLServerQuery")
+                .getOrCreate()
+            )
+        pdf = pd.DataFrame.from_records(rows, columns=columns)
+        return spark.createDataFrame(pdf)
+
+    else:
+        raise ValueError("engine inválido. Usa 'polars', 'pandas' o 'pyspark'.")
+
+
+print("[OK] Función query_to_df definida.")
+```
+
+-   **Boxhist_interactivo**: aprovecha las funciones interactivas del paquete **plotly** de `Python` para crear un pequeño cuadro de mando para el análisis univariado de las variables numéricas de una tabla de datos `pandas`. Puede segmentar el análisis respecto a alguna variable categórica. El cuadro incluye:
+    -   Lista desplegable de variables seleccionables para analizar.
+    -   Tabla de estadísticas exploratorias.
+    -   Gráficas de histograma y diagrama de caja alineados entre si para un análisis visual conjunto.
+    -   Marcas verticales de las estadísticas: Media (roja y segmentada) y Mediana (verde y entera).
 
 ```{python}
 #| label: Crear Dashboard univariado
-#| echo: false
-#| warning: false
-#| error: false
-#| cache: false          # Activa el cache de celdas
-#| freeze: auto         # Evita re-renderizar si no hubo cambios globales
+#| echo: true
+#| cache: true
 
 # import pandas as pd
 # import numpy as np
@@ -926,205 +869,6 @@ def boxhist_interactivo(
     fig.update_yaxes(title_text='', row=2, col=1)
 
     return fig
-```
 
-# Métricas de siniestros más robados
-
-Tabla de análisis de métricas de siniestros para las marcas-modelo más robados. (`LR`, `Frec` y `Promedio Tasa Frecuencia Robo (AACH)` están en porcentaje).
-
--   **Azul**: Actualmente bloqueada.
--   **Roja**: Actualmente monitoreada.
--   **Amarilla**: Solo destacada en el informe de la AACH.
-
-```{python}
-#| label: Dataframe
-#| echo: false
-#| warning: false
-#| error: false
-#| cache: false          # Activa el cache de celdas
-#| freeze: auto         # Evita re-renderizar si no hubo cambios globales
-
-df_robos = pl.read_parquet("df_robos.parquet")
-
-df_robos_ordenado = (
-    df_robos
-    .with_columns(
-        pl.when(pl.col("ESTADO SUSCRIPCION") == "BLOQUEADA").then(0)
-        .when(pl.col("ESTADO SUSCRIPCION") == "MONITOREADA").then(1)
-        .when(pl.col("ESTADO SUSCRIPCION") == "AACH").then(2)
-        .otherwise(999)                     # por ejemplo, otros estados al final
-        .alias("orden_prop")
-    )
-    .sort("orden_prop")
-    .drop("orden_prop")
-)
-
-paleta_robos = {
-    "MONITOREADA": "#FF9494",
-    "BLOQUEADA": "#94B6FF",
-    "AACH": "#FFDF94",
-}
-
-LR = ["LR_Robo", "LR_DP", "LR_PT", "LR_RC", "LR_TOTAL"]
-
-pretty_table(df_robos_ordenado,
-            n=100,
-            highlight_col="ESTADO SUSCRIPCION",
-            highlight_palette=paleta_robos,
-            highlight_cols=LR,
-            title="Tabla de marcas-modelo más robados (colores por estado suscripción actual)"
-            )
-
-```
-
-```{python}
-#| label: Dashboard-robos
-#| echo: false
-#| warning: false
-#| error: false
-#| cache: false          # Activa el cache de celdas
-#| freeze: auto         # Evita re-renderizar si no hubo cambios globales
-
-df_panda = df_robos.to_pandas()
-
-# ---- Generar gráfico interactivo ----
-fig_interactivo = boxhist_interactivo(
-    df_panda, 
-    titulo="Características univariadas de la Tabla de más robados"
-)
-
-fig_interactivo.show()
-```
-
-```{python}
-#| label: dashboard-robos-desagregado
-#| echo: false
-#| warning: false
-#| error: false
-#| cache: false          # Activa el cache de celdas
-#| freeze: auto         # Evita re-renderizar si no hubo cambios globales
-
-# ---- Generar gráfico interactivo ----
-fig_interactivo_desagregado = boxhist_interactivo(
-    df_panda, 
-    titulo="Características univariadas de la Tabla de más robados (desagregada por tipo de siniestro)",
-    color_var="ESTADO SUSCRIPCION"
-)
-
-fig_interactivo_desagregado.show()
-```
-
-# Tabla de resultados sugeridos según criterios automáticos.
-
-Muestra la tabla de resultados sugeridos según análisis de métricas de siniestros **automatizada** para las marcas-modelo más robados. (`LR`, `Frec` y `Promedio Tasa Frecuencia Robo (AACH)` están en porcentaje).
-
--   **Azul**: Bloquear.
--   **Roja**: Monitorear.
--   **Verde**: Sacar de la lista.
-
-::: {.callout-caution collapse="true"}
-## Criterios de selección automatizados
-
-Los criterios van en flujo **Bloquear \> Monitorear \> sacar**. Es decir, solo se saca si no se debe monitorear o bloquear y solo se monitorea si no se debe bloquear.
-
-| Categoría | Condición |
-|---------------------------|---------------------------------------------|
-| **Bloquear** | Cumple **al menos uno**: |
-|  | \- Promedio Tasa Frecuencia Robo (AACH) **\>= 2,5** |
-|  | \- **LR_TOTAL \>= 75** |
-|  | \- Categoría **Bloqueos estratégicos** |
-| **Monitorear** | Cumple **al menos uno** (solo si NO cumple criterios de Bloquear): |
-|  | \- Promedio Tasa Frecuencia Robo (AACH) **\>= 1,5** |
-|  | \- **65 \<= LR_TOTAL \< 75** |
-| **Salir** | Debe cumplir **ambos** (solo si NO cumple criterios anteriores): |
-|  | \- Promedio Tasa Frecuencia Robo (AACH) **\< 1,5** |
-|  | \- **LR_TOTAL \< 65** |
-| **Facilitadores** | Aplican holguras a los criterios (con holguras `LR_TOTAL` NO acumulables entre sí): |
-|  | \- Si **LR_ROBO \< LR_DP** → Holgura **+5 en LR_TOTAL** y **+0,3 en AACH** |
-|  | \- Si **ESTADO SUSCRIPCION = BLOQUEADA** → Holgura **+5 en LR_TOTAL** |
-|  | \- Si **AACH = NA** → Holgura **+5 en LR_TOTAL** |
-| **Advertencias** | \- Daño parcial tiene menor siniestralidad que Robo: **LR_ROBO \> LR_DP** |
-|  | \- Si son bloqueos estratégicos |
-:::
-
-```{python}
-#| label: propuesta-selecciones-automáticas
-#| echo: false
-#| warning: false
-#| error: false
-#| cache: false          # Activa el cache de celdas
-#| freeze: auto         # Evita re-renderizar si no hubo cambios globales
-
-# import polars as pl
-
-# ── Categorización automática: criterio actuarial senior ───────────────────
-# Orden de prioridad: BLOQUEAR > MONITOREAR > SALIR
-#   BLOQUEAR  : AACH >= 2.5  ó  LR_TOTAL >= 75
-#   MONITOREAR: AACH >= 1.5  ó  65 <= LR_TOTAL < 75
-#   SALIR     : LR_TOTAL < 65 (resto)
-# Advertencia : LR_Robo >= LR_DP (siniestralidad robo supera daño parcial)
-
-df_robos = pl.read_parquet("df_sugerencias.parquet")
-
-
-df_robos_sug = (
-    df_robos
-    .with_columns(
-        pl.when(pl.col("PROPUESTA") == "BLOQUEAR").then(0)
-        .when(pl.col("PROPUESTA") == "MONITOREAR").then(1)
-        .when(pl.col("PROPUESTA") == "SALIR").then(2)
-        .otherwise(999)                     # por ejemplo, otros estados al final
-        .alias("orden_prop")
-    )
-    .sort("orden_prop")
-    .drop("orden_prop")
-)
-
-# ── Paleta semántica para la propuesta ─────────────────────────────────────
-paleta_propuesta = {
-    "BLOQUEAR":   "#94b6ffbe",   # Rojo suave
-    "MONITOREAR": "#ff9494cc",   # Amarillo/naranja suave
-    "SALIR":      "#94dfadd3",   # Verde suave
-}
-
-LR = ["LR_Robo", "LR_DP", "LR_PT", "LR_RC", "LR_TOTAL"]
-
-pretty_table(
-    df_robos_sug,
-    n=100,
-    highlight_col="PROPUESTA",
-    highlight_palette=paleta_propuesta,
-    highlight_cols=LR,
-    title="Propuesta automatizada de selección (coloreado por estado propuesto)"
-)
-```
-
-```{python}
-#| label: dashboard-sugerencias-desagregado
-#| echo: false
-#| warning: false
-#| error: false
-#| cache: false          # Activa el cache de celdas
-#| freeze: auto         # Evita re-renderizar si no hubo cambios globales
-
-df_panda_sug = df_robos.to_pandas()
-
-# ---- Generar gráfico interactivo ----
-fig_interactivo_desagregado_sugerencias = boxhist_interactivo(
-    df_panda_sug, 
-    titulo="Características univariadas de la Tabla de sugerencias automáticas (desagregada por sugerencia)",
-    color_var="PROPUESTA"
-)
-
-fig_interactivo_desagregado_sugerencias.show()
-```
-
-## Cambios sugeridos
-
-Resumen de propuesta de cambios a realizarse según el análisis automatizado.
-
-```{=html}
-<iframe src="Tabla_interpretaciones.html" width="100%" height="1200"
-  style="border:none;border-radius:12px;box-shadow:0 2px 16px rgba(0,48,87,.1);margin:12px 0 36px;"
-  loading="lazy"></iframe>
+print("[OK] Función boxhist_interactivo definida con densidades relativas al total.")
 ```
