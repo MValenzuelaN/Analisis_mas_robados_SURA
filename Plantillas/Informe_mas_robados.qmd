@@ -168,7 +168,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.styles.colors import Color
 from openpyxl.utils import get_column_letter
-from datetime import datetime
+from datetime import datetime, timedelta
 import zipfile, shutil, os
 
 import numpy as np
@@ -267,8 +267,8 @@ Vista parcial de la tabla de datos resultante de la consulta `SQL` a la base de 
 # import polars as pl
 # from pathlib import Path
 # from datetime import datetime
-import os
-from os import path
+# import os
+# from os import path
 
 # --- Resolver rutas ---
 
@@ -278,16 +278,11 @@ PROJECT_ROOT = Path.cwd().resolve().parents[0]  # Para ejecución desde notebook
 
 DATA_DIR = PROJECT_ROOT / "Entradas" / "Tabla_de_datos"
 
-print("PROJECT_ROOT:", PROJECT_ROOT)
-print("DATA_DIR:", DATA_DIR, "exists:", DATA_DIR.exists())
-
 # Nombre del archivo en formato Parquet
 parquet_path = DATA_DIR / "Tabla_robados.parquet"
 
 
-print("CWD:", Path.cwd())
-print("Parquet path:", parquet_path.resolve())
-
+Diff_fechas = 28  # días antes de regenerar el parquet
 
 # Calcular dinámicamente los 3 últimos cuatrimestres (correspondientes a trimestres Q1-Q4)
 hoy = datetime.now()
@@ -307,7 +302,11 @@ str_trimestres = ", ".join(trimestres_lista)
 
 print(f"[INFO] Cuatrimestres detectados para el análisis: {str_trimestres}")
 
-if not parquet_path.exists():
+
+if parquet_expirado(parquet_path, Diff_fechas):
+
+    print("[INFO] Generando / actualizando parquet...")
+
     # Si NO existe el archivo, ejecutamos el query y generamos el Parquet
     query = f"""
     SELECT

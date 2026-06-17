@@ -872,3 +872,25 @@ def boxhist_interactivo(
 
 print("[OK] Función boxhist_interactivo definida con densidades relativas al total.")
 ```
+
+
+-   **Pretty_table**:
+
+```{python}
+#| label: Actualizar tabla de datos SQLSERVER
+#| echo: true
+#| cache: true
+
+# from datetime import datetime, timedelta
+
+def parquet_expirado(parquet_path, diff_dias):
+    if not parquet_path.exists():
+        return True
+
+    fecha_modificacion = datetime.fromtimestamp(parquet_path.stat().st_mtime)
+    fecha_actual = datetime.now()
+
+    diferencia = fecha_actual - fecha_modificacion
+
+    return diferencia > timedelta(days=diff_dias)
+```
