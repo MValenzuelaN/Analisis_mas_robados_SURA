@@ -105,8 +105,17 @@ def esperar_archivo(path, timeout=5):
 # ---------------------------
 # Verificar si hay archivos en la carpeta Excel (detener proceso si hay alguno)
 # ---------------------------
-def hay_archivos_en_excel(project_root):
+def hay_archivos_en_excel(project_root: Path) -> bool:
+    """Verifica si existen archivos Excel (.xlsx, .xls, .xlsm, .xlsb) en Salidas/Excel.
+
+    Args:
+        project_root: Ruta raíz del proyecto.
+
+    Returns:
+        True si se detecta al menos un archivo Excel; False en caso contrario.
+    """
     carpeta_excel = project_root / "Salidas" / "Excel"
+    extensiones_excel = {".xlsx", ".xls", ".xlsm", ".xlsb"}
 
     print("Revisando carpeta Excel")
 
@@ -114,12 +123,15 @@ def hay_archivos_en_excel(project_root):
         print("[INFO] La carpeta Excel no existe, se continúa el proceso.")
         return False
 
-    # Verificar si hay archivos
-    archivos = list(carpeta_excel.glob("*"))
+    # Filtrar solo archivos con extensión de Excel
+    archivos_excel = [
+        f for f in carpeta_excel.iterdir()
+        if f.is_file() and f.suffix.lower() in extensiones_excel
+    ]
 
-    if len(archivos) > 0:
-        print("[DETENIDO] Hay archivos en la carpeta Excel:")
-        for archivo in archivos:
+    if archivos_excel:
+        print("[DETENIDO] Hay archivos Excel en la carpeta Excel:")
+        for archivo in archivos_excel:
             print(" -", archivo.name)
         return True
 
