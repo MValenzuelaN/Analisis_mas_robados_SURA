@@ -509,6 +509,68 @@ def pretty_table(
 print("[OK] Función pretty_table definida con botones de descarga, HTML estilado, coloreado por variable categórica.")
 ```
 
+-   **connection_string**: detecta automáticamente el driver ODBC disponible (18 o 17) y construye la cadena de conexión a `SQL Server` con autenticación de Windows.
+
+```{python}
+#| label: connection-string-builder
+#| echo: true
+#| cache: true
+
+# import pyodbc
+
+def connection_string(
+    server: str = "SGF1025",
+    database: str = "Transaccional",
+    trusted: bool = True,
+    encrypt: bool = False,
+) -> str:
+    """Construye la cadena de conexión ODBC para SQL Server.
+
+    Detecta automáticamente si el sistema dispone del ODBC Driver 18
+    o el 17 y selecciona el más reciente. Lanza ``RuntimeError``
+    cuando no se encuentra ninguno de los dos.
+
+    Args:
+        server: Nombre o IP del servidor SQL Server.
+        database: Base de datos de destino.
+        trusted: Si ``True``, usa autenticación integrada de Windows.
+        encrypt: Si ``True``, habilita cifrado TLS en la conexión.
+
+    Returns:
+        Cadena de conexión lista para ``pyodbc.connect()``.
+
+    Raises:
+        RuntimeError: Si no se encuentra ODBC Driver 17 ni 18.
+    """
+    drivers_disponibles: list[str] = pyodbc.drivers()
+
+    driver: str | None = None
+    for candidato in ("ODBC Driver 18 for SQL Server",
+                      "ODBC Driver 17 for SQL Server"):
+        if candidato in drivers_disponibles:
+            driver = candidato
+            break
+
+    if driver is None:
+        raise RuntimeError(
+            "No se encontró 'ODBC Driver 18 for SQL Server' ni "
+            "'ODBC Driver 17 for SQL Server'. Drivers disponibles: "
+            f"{drivers_disponibles}"
+        )
+
+    partes: list[str] = [
+        f"DRIVER={{{driver}}}",
+        f"SERVER={server}",
+        f"DATABASE={database}",
+        f"Trusted_Connection={'yes' if trusted else 'no'}",
+        f"Encrypt={'yes' if encrypt else 'no'}",
+    ]
+    return ";".join(partes) + ";"
+
+
+print("[OK] Función connection_string definida (detecta Driver 18/17).")
+```
+
 -   **Query_to_df**: ejecuta una consulta en lenguaje `SQL` desde `Python` a través de una conexión con una base de datos y obtiene la tabla de datos resultante en formato `pandas`, `polars` o `pyspark`.
 
 ```{python}
@@ -521,7 +583,7 @@ print("[OK] Función pretty_table definida con botones de descarga, HTML estilad
 # import pandas as pd
 # from pyspark.sql import SparkSession
 
-# Requiere connection_string
+# Usa connection_string()
 
 
 def query_to_df(
@@ -531,7 +593,7 @@ def query_to_df(
 ):
     engine = engine.lower()
 
-    conn = pyodbc.connect(connection_string)
+    conn = pyodbc.connect(connection_string())
     cursor = conn.cursor()
     cursor.execute(sql)
 

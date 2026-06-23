@@ -226,23 +226,38 @@ Establece conexión con los servidores de `SQL Server` mediante autenticación a
 
 # import pyodbc
 
-connection_string = (
-    "DRIVER={ODBC Driver 18 for SQL Server};"
-    "SERVER=SGF1025;"
-    "DATABASE=Transaccional;"
-    "Trusted_Connection=yes;"
-    "Encrypt=no;"
-)
+# connection_string() se define en utilidades.qmd (incluido más abajo).
+# Al ser una función, se invoca justo aquí para verificar la conexión.
+
+# Cargar la función antes del include (definición local temporal para el test)
+def _detect_odbc_driver() -> str:
+    """Detecta ODBC Driver 18 o 17 para la prueba de conexión inicial."""
+    for drv in ("ODBC Driver 18 for SQL Server",
+                "ODBC Driver 17 for SQL Server"):
+        if drv in pyodbc.drivers():
+            return drv
+    raise RuntimeError(
+        "No se encontró ODBC Driver 18 ni 17. "
+        f"Drivers disponibles: {pyodbc.drivers()}"
+    )
 
 try:
-    conn = pyodbc.connect(connection_string)
+    _driver = _detect_odbc_driver()
+    _conn_str = (
+        f"DRIVER={{{_driver}}};"
+        "SERVER=SGF1025;"
+        "DATABASE=Transaccional;"
+        "Trusted_Connection=yes;"
+        "Encrypt=no;"
+    )
+    conn = pyodbc.connect(_conn_str)
     cursor = conn.cursor()
     cursor.execute("SELECT 1 AS test_col;")
 
     row = cursor.fetchone()
 
     if list(row) == [1]:
-        print("[OK] Conexión establecida con éxito.")
+        print(f"[OK] Conexión establecida con éxito (driver: {_driver}).")
     else:
         print("[WARN] Conexión establecida, pero la prueba devolvió un valor inesperado.")
 
