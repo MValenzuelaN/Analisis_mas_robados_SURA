@@ -265,7 +265,7 @@ try:
     conn.close()
 except Exception as e:
     print(f"[WARN] No se pudo conectar a SQL Server: {e}")
-    print("       El informe usará los archivos CSV locales si están disponibles.")
+    print("       El informe usará los archivos .parquet locales si están disponibles.")
 ```
 
 {{< include utilidades.qmd >}}
