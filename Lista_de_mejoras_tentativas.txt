@@ -1,0 +1,5 @@
+- Automatizar scrapeo de datos.
+- Utilizar la variable de región.
+- Subir a Databricks.
+- Los bloqueados solo pueden monitorearse o mantenerse
+(a menos que se indique manualmente lo contrario).
